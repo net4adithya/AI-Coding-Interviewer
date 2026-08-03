@@ -1,0 +1,227 @@
+// Prisma Schema for Enterprise-Grade AI Coding Review Platform Backend (Phase 1 Foundation)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------
+// Enums
+// ------------------------------------------------------
+
+enum AssignmentDifficulty {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum AssignmentStatusEnum {
+  DRAFT
+  PUBLISHED
+  IN_PROGRESS
+  SUBMITTED
+  UNDER_REVIEW
+  COMPLETED
+  ARCHIVED
+}
+
+// ------------------------------------------------------
+// Core Models
+// ------------------------------------------------------
+
+model User {
+  id           String      @id @default(uuid())
+  email        String      @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  isActive     Boolean     @default(true)
+  roleId       String
+  role         Role        @relation(fields: [roleId], references: [id])
+  
+  authority    Authority?
+  intern       Intern?
+  sessions     Session[]
+  auditLogs    AuditLog[]
+  createdAssignments Assignment[] @relation("CreatedAssignments")
+
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique // e.g. AUTHORITY, INTERN
+  description String?
+  permissions String[] // e.g. ["assignments:create", "interns:read"]
+  users       User[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("roles")
+}
+
+model Authority {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department      String
+  designation     String
+  
+  managedInterns  Intern[] @relation("AuthorityInterns")
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("authorities")
+}
+
+model Intern {
+  id            String       @id @default(uuid())
+  userId        String       @unique
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  authorityId   String?
+  authority     Authority?   @relation("AuthorityInterns", fields: [authorityId], references: [id], onDelete: SetNull)
+  
+  institution   String?
+  startDate     DateTime?
+  endDate       DateTime?
+
+  assignments   Assignment[] @relation("InternAssignments")
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@map("interns")
+}
+
+model Session {
+  id               String   @id @default(uuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash String
+  expiresAt        DateTime
+  ipAddress        String?
+  userAgent        String?
+  isRevoked        Boolean  @default(false)
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@map("sessions")
+}
+
+model ProgrammingLanguage {
+  id          String       @id @default(uuid())
+  name        String       @unique // e.g. TypeScript, Python, Java
+  slug        String       @unique // e.g. typescript, python, java
+  isActive    Boolean      @default(true)
+
+  assignments Assignment[]
+
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@map("programming_languages")
+}
+
+model AssignmentStatus {
+  id          String               @id @default(uuid())
+  name        String               @unique
+  code        AssignmentStatusEnum @unique
+  description String?
+
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  @@map("assignment_statuses")
+}
+
+model Assignment {
+  id          String               @id @default(uuid())
+  title       String
+  description String
+  difficulty  AssignmentDifficulty @default(BEGINNER)
+  
+  languageId  String
+  language    ProgrammingLanguage  @relation(fields: [languageId], references: [id])
+  
+  deadline    DateTime
+  status      AssignmentStatusEnum @default(DRAFT)
+  
+  internId    String?
+  intern      Intern?              @relation("InternAssignments", fields: [internId], references: [id], onDelete: SetNull)
+  
+  createdById String
+  createdBy   User                 @relation("CreatedAssignments", fields: [createdById], references: [id])
+
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  @@map("assignments")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String   // e.g. USER_LOGIN, CREATE_ASSIGNMENT
+  resource  String   // e.g. auth, assignments
+  details   Json?
+  ipAddress String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  @@map("audit_logs")
+}
+
+// ------------------------------------------------------
+// Future Relation Placeholders (Prepared for Phase 2+)
+// ------------------------------------------------------
+// model Submission {
+//   id           String      @id @default(uuid())
+//   assignmentId String
+//   internId     String
+//   code         String
+//   status       String
+//   submittedAt  DateTime    @default(now())
+//   aiReviews    AIReview[]
+//   executionLogs ExecutionLog[]
+// }
+//
+// model AIReview {
+//   id           String      @id @default(uuid())
+//   submissionId String
+//   score        Float
+//   feedback     Json
+//   reports      Report[]
+// }
+//
+// model ExecutionLog {
+//   id           String      @id @default(uuid())
+//   submissionId String
+//   stdout       String
+//   stderr       String
+//   exitCode     Int
+// }
+//
+// model Report {
+//   id           String      @id @default(uuid())
+//   aiReviewId   String
+//   summary      String
+// }
+//
+// model BehaviorTimeline {
+//   id           String      @id @default(uuid())
+//   submissionId String
+//   events       Json
+// }
