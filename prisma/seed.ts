@@ -1,5 +1,5 @@
-import { PrismaClient, AssignmentDifficulty, AssignmentStatusEnum } from '@prisma/client';
-import * as bcrypt from 'bcrypt';
+import { PrismaClient } from '@prisma/client';
+import * as bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
@@ -13,7 +13,7 @@ async function main() {
     create: {
       name: 'AUTHORITY',
       description: 'Manager / Team Lead with administrative & review access',
-      permissions: [
+      permissions: JSON.stringify([
         'users:read',
         'interns:manage',
         'assignments:create',
@@ -22,7 +22,7 @@ async function main() {
         'assignments:delete',
         'dashboard:authority',
         'audit:read',
-      ],
+      ]),
     },
   });
 
@@ -32,11 +32,11 @@ async function main() {
     create: {
       name: 'INTERN',
       description: 'Intern completing assigned coding challenges',
-      permissions: [
+      permissions: JSON.stringify([
         'assignments:read',
         'dashboard:intern',
         'profile:read',
-      ],
+      ]),
     },
   });
 
@@ -63,13 +63,13 @@ async function main() {
 
   // 3. Seed Assignment Statuses
   const statuses = [
-    { name: 'Draft', code: AssignmentStatusEnum.DRAFT, description: 'Assignment is in draft mode' },
-    { name: 'Published', code: AssignmentStatusEnum.PUBLISHED, description: 'Assignment is published for interns' },
-    { name: 'In Progress', code: AssignmentStatusEnum.IN_PROGRESS, description: 'Intern is working on the assignment' },
-    { name: 'Submitted', code: AssignmentStatusEnum.SUBMITTED, description: 'Assignment submitted by intern' },
-    { name: 'Under Review', code: AssignmentStatusEnum.UNDER_REVIEW, description: 'Assignment under review by AI/Authority' },
-    { name: 'Completed', code: AssignmentStatusEnum.COMPLETED, description: 'Assignment completed' },
-    { name: 'Archived', code: AssignmentStatusEnum.ARCHIVED, description: 'Assignment archived' },
+    { name: 'Draft', code: 'DRAFT', description: 'Assignment is in draft mode' },
+    { name: 'Published', code: 'PUBLISHED', description: 'Assignment is published for interns' },
+    { name: 'In Progress', code: 'IN_PROGRESS', description: 'Intern is working on the assignment' },
+    { name: 'Submitted', code: 'SUBMITTED', description: 'Assignment submitted by intern' },
+    { name: 'Under Review', code: 'UNDER_REVIEW', description: 'Assignment under review by AI/Authority' },
+    { name: 'Completed', code: 'COMPLETED', description: 'Assignment completed' },
+    { name: 'Archived', code: 'ARCHIVED', description: 'Assignment archived' },
   ];
 
   for (const st of statuses) {
@@ -88,7 +88,7 @@ async function main() {
   // Authority User
   const authorityUser = await prisma.user.upsert({
     where: { email: 'authority@platform.com' },
-    update: {},
+    update: { passwordHash: defaultPasswordHash },
     create: {
       email: 'authority@platform.com',
       passwordHash: defaultPasswordHash,
@@ -108,7 +108,7 @@ async function main() {
   // Intern User
   const internUser = await prisma.user.upsert({
     where: { email: 'intern@platform.com' },
-    update: {},
+    update: { passwordHash: defaultPasswordHash },
     create: {
       email: 'intern@platform.com',
       passwordHash: defaultPasswordHash,
@@ -137,10 +137,10 @@ async function main() {
       data: {
         title: 'Implement Clean Architecture Microservice In NestJS',
         description: 'Build a modular NestJS service with JWT Authentication, Prisma ORM, and RBAC Guards.',
-        difficulty: AssignmentDifficulty.INTERMEDIATE,
+        difficulty: 'INTERMEDIATE',
         languageId: tsLang.id,
         deadline: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
-        status: AssignmentStatusEnum.PUBLISHED,
+        status: 'PUBLISHED',
         createdById: authorityUser.id,
         internId: internUser.intern.id,
       },

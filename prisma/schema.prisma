@@ -6,28 +6,16 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url = env("DATABASE_URL")
 }
 
 // ------------------------------------------------------
 // Enums
 // ------------------------------------------------------
 
-enum AssignmentDifficulty {
-  BEGINNER
-  INTERMEDIATE
-  ADVANCED
-}
+// AssignmentDifficulty enum removed for SQLite compatibility
 
-enum AssignmentStatusEnum {
-  DRAFT
-  PUBLISHED
-  IN_PROGRESS
-  SUBMITTED
-  UNDER_REVIEW
-  COMPLETED
-  ARCHIVED
-}
+// AssignmentStatusEnum enum removed for SQLite compatibility
 
 // ------------------------------------------------------
 // Core Models
@@ -59,7 +47,7 @@ model Role {
   id          String   @id @default(uuid())
   name        String   @unique // e.g. AUTHORITY, INTERN
   description String?
-  permissions String[] // e.g. ["assignments:create", "interns:read"]
+  permissions String // JSON or CSV string for permissions
   users       User[]
 
   createdAt   DateTime @default(now())
@@ -84,6 +72,8 @@ model Authority {
 }
 
 model Intern {
+  // existing fields ...
+  submissions Submission[]
   id            String       @id @default(uuid())
   userId        String       @unique
   user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -120,6 +110,8 @@ model Session {
 }
 
 model ProgrammingLanguage {
+  // existing fields ...
+  submissions Submission[]
   id          String       @id @default(uuid())
   name        String       @unique // e.g. TypeScript, Python, Java
   slug        String       @unique // e.g. typescript, python, java
@@ -136,7 +128,7 @@ model ProgrammingLanguage {
 model AssignmentStatus {
   id          String               @id @default(uuid())
   name        String               @unique
-  code        AssignmentStatusEnum @unique
+  code        String @unique
   description String?
 
   createdAt   DateTime             @default(now())
@@ -146,25 +138,30 @@ model AssignmentStatus {
 }
 
 model Assignment {
-  id          String               @id @default(uuid())
-  title       String
-  description String
-  difficulty  AssignmentDifficulty @default(BEGINNER)
-  
-  languageId  String
-  language    ProgrammingLanguage  @relation(fields: [languageId], references: [id])
-  
-  deadline    DateTime
-  status      AssignmentStatusEnum @default(DRAFT)
-  
-  internId    String?
-  intern      Intern?              @relation("InternAssignments", fields: [internId], references: [id], onDelete: SetNull)
-  
-  createdById String
-  createdBy   User                 @relation("CreatedAssignments", fields: [createdById], references: [id])
+  // existing fields ...
+  submissions Submission[]
+  id                 String               @id @default(uuid())
+  title              String
+  description        String
+  difficulty   String @default("BEGINNER") // was AssignmentDifficulty
 
-  createdAt   DateTime             @default(now())
-  updatedAt   DateTime             @updatedAt
+  languageId         String
+  language           ProgrammingLanguage  @relation(fields: [languageId], references: [id])
+
+  deadline           DateTime
+  status       String @default("DRAFT") // was AssignmentStatusEnum
+
+  internId           String?
+  intern             Intern?              @relation("InternAssignments", fields: [internId], references: [id], onDelete: SetNull)
+
+  createdById        String
+  createdBy          User                 @relation("CreatedAssignments", fields: [createdById], references: [id])
+
+  // New field for resubmission policy
+  allowResubmission  Boolean              @default(false)
+
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
 
   @@map("assignments")
 }
@@ -175,7 +172,8 @@ model AuditLog {
   user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   action    String   // e.g. USER_LOGIN, CREATE_ASSIGNMENT
   resource  String   // e.g. auth, assignments
-  details   Json?
+  details   String? // JSON stored as string
+
   ipAddress String?
   userAgent String?
 
@@ -187,41 +185,47 @@ model AuditLog {
 // ------------------------------------------------------
 // Future Relation Placeholders (Prepared for Phase 2+)
 // ------------------------------------------------------
-// model Submission {
-//   id           String      @id @default(uuid())
-//   assignmentId String
-//   internId     String
-//   code         String
-//   status       String
-//   submittedAt  DateTime    @default(now())
-//   aiReviews    AIReview[]
-//   executionLogs ExecutionLog[]
-// }
-//
-// model AIReview {
-//   id           String      @id @default(uuid())
-//   submissionId String
-//   score        Float
-//   feedback     Json
-//   reports      Report[]
-// }
-//
-// model ExecutionLog {
-//   id           String      @id @default(uuid())
-//   submissionId String
-//   stdout       String
-//   stderr       String
-//   exitCode     Int
-// }
-//
-// model Report {
-//   id           String      @id @default(uuid())
-//   aiReviewId   String
-//   summary      String
-// }
-//
-// model BehaviorTimeline {
-//   id           String      @id @default(uuid())
-//   submissionId String
-//   events       Json
-// }
+// Submission & versioning models added for Phase 2
+
+// SubmissionStatus enum removed for SQLite compatibility
+
+model Submission {
+  id               String   @id @default(uuid())
+  assignmentId     String
+  internId         String
+  languageId       String
+  status       String @default("DRAFT") // was SubmissionStatus
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  currentVersionId String? @unique
+
+  assignment   Assignment   @relation(fields: [assignmentId], references: [id])
+  intern       Intern       @relation(fields: [internId], references: [id])
+  language     ProgrammingLanguage @relation(fields: [languageId], references: [id])
+  currentVersion SubmissionVersion? @relation("CurrentVersion", fields: [currentVersionId], references: [id])
+  versions    SubmissionVersion[] @relation("SubmissionVersions")
+
+  @@index([assignmentId])
+  @@index([internId])
+  @@index([status])
+}
+
+model SubmissionVersion {
+  id           String   @id @default(uuid())
+  submissionId String
+  version      Int
+  sourceCode   String
+  createdAt    DateTime @default(now())
+
+  // Placeholders for future relations
+  // aiReviewId   String?
+  // executionLogId String?
+  // staticAnalysisId String?
+  // reportId String?
+
+  submission   Submission @relation("SubmissionVersions", fields: [submissionId], references: [id])
+  currentOf    Submission? @relation("CurrentVersion")
+
+  @@unique([submissionId, version])
+}
+
