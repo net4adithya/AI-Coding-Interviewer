@@ -7,20 +7,28 @@ and reading configuration from the same `.env` file. It uses SQLAlchemy for the
 ORM and Pydantic models for request validation.
 """
 
+import sys
+import os
 import uvicorn
 from fastapi import FastAPI
+
+# Add root directory to sys.path so modules like static_analysis, ai_review, and authority_review can be imported
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from app.config import settings
 from app.routers import auth, users, roles, authorities, interns, assignments, dashboard, audit, submissions
+from static_analysis.api.router import router as static_analysis_router
+from authority_review.api.router import router as authority_review_router
 
 app = FastAPI(
     title="AI Coding Review Platform API",
-    description="Backend API for AI Coding Review Platform (Phase 1)",
+    description="Backend API for AI Coding Review Platform",
     version="1.0",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
 )
 
-# Include routers – each router mirrors a NestJS module.
+# Include routers – each router mirrors a NestJS / FastAPI module.
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(roles.router, prefix="/roles", tags=["roles"])
@@ -30,6 +38,8 @@ app.include_router(assignments.router, prefix="/assignments", tags=["assignments
 app.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 app.include_router(audit.router, prefix="/audit-logs", tags=["audit"])
 app.include_router(submissions.router, prefix="/submissions", tags=["submissions"])
+app.include_router(static_analysis_router, prefix="/static-analysis", tags=["static-analysis"])
+app.include_router(authority_review_router, prefix="/authority-review", tags=["authority-review"])
 
 # Root health endpoint
 @app.get("/health")

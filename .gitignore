@@ -1,4 +1,19 @@
+# Environment variables
 .env
+
+# Dependencies & Build output
 node_modules/
-/dist/
-.env.example
+dist/
+
+# Python Virtual Environments & Caches
+venv/
+venv2/
+python_backend/venv/
+python_backend/venv2/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Artifacts & Local workspace temporary files
+Coding/
+Interviewer/
