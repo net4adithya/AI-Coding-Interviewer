@@ -11,15 +11,14 @@ from app.db.base_class import Base
 class Submission(Base):
     __tablename__ = "submission"
     id = Column(Integer, primary_key=True, index=True)
+    assessment_id = Column(Integer, ForeignKey("assessments.id"), nullable=True, index=True)
+    question_id = Column(Integer, ForeignKey("questions.id"), nullable=True, index=True)
     status = Column(String, nullable=True)
 
 class Assignment(Base):
     __tablename__ = "assignment"
     id = Column(Integer, primary_key=True, index=True)
 
-class User(Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
 
 class AnalysisStatusEnum(str, enum.Enum):
     PENDING = "PENDING"

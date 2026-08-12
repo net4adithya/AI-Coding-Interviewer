@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    background-color: #F7F9FA;
+    color: #172026;
+  }
+}
+
+@layer utilities {
+  .custom-border {
+    border-color: #E4E8EA;
+  }
+}

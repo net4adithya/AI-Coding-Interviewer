@@ -19,6 +19,10 @@ from app.config import settings
 from app.routers import auth, users, roles, authorities, interns, assignments, dashboard, audit, submissions
 from static_analysis.api.router import router as static_analysis_router
 from authority_review.api.router import router as authority_review_router
+from app.editor.api.router import router as editor_router
+from app.execution.api.router import router as execution_router
+from app.assessment.api.router import router as assessment_router
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
     title="AI Coding Review Platform API",
@@ -26,6 +30,14 @@ app = FastAPI(
     version="1.0",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Include routers – each router mirrors a NestJS / FastAPI module.
@@ -40,6 +52,9 @@ app.include_router(audit.router, prefix="/audit-logs", tags=["audit"])
 app.include_router(submissions.router, prefix="/submissions", tags=["submissions"])
 app.include_router(static_analysis_router, prefix="/static-analysis", tags=["static-analysis"])
 app.include_router(authority_review_router, prefix="/authority-review", tags=["authority-review"])
+app.include_router(editor_router, prefix="/api/v1/editor", tags=["editor"])
+app.include_router(execution_router, prefix="/api/v1/execution", tags=["execution"])
+app.include_router(assessment_router, prefix="/api/v1/assessments", tags=["assessments"])
 
 # Root health endpoint
 @app.get("/health")
