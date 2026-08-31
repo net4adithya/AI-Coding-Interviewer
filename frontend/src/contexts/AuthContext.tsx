@@ -1,6 +1,5 @@
+// frontend/src/contexts/AuthContext.tsx
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { supabase } from '../services/supabase';
-import { User as SupabaseUser, Session } from '@supabase/supabase-js';
 
 export type Role = 'authority' | 'intern';
 
@@ -16,118 +15,153 @@ interface AuthContextType {
   isLoading: boolean;
   signIn: (email: string, password?: string) => Promise<{ error?: string }>;
   signOut: () => Promise<void>;
-  session: Session | null;
+  demoToken: string | null;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const mapSupabaseUser = (su: SupabaseUser | null): User | null => {
-  if (!su) return null;
-  const role = (su.user_metadata?.role?.toLowerCase() || 'intern') as Role;
-  const name = su.user_metadata?.full_name || su.email?.split('@')[0] || 'Unknown';
-  return {
-    id: su.id,
-    name,
-    email: su.email || '',
-    role
-  };
-};
+const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === 'true';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+const STORAGE_KEY_USER = 'demo_user';
+const STORAGE_KEY_TOKEN = 'demo_token';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [demoToken, setDemoToken] = useState<string | null>(null);
 
+  // ── Restore session from localStorage on mount ────────────────────────────
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(async ({ data: { session: currentSession } }) => {
-      setSession(currentSession);
-      if (currentSession) {
+    if (DEMO_MODE) {
+      const storedUser = localStorage.getItem(STORAGE_KEY_USER);
+      const storedToken = localStorage.getItem(STORAGE_KEY_TOKEN);
+      if (storedUser && storedToken) {
         try {
-          const res = await fetch(import.meta.env.VITE_API_BASE_URL + '/users/me', {
-            headers: {
-              'Authorization': `Bearer ${currentSession.access_token}`
-            }
-          });
-          if (res.ok) {
-            const data = await res.json();
-            setUser({
-              id: data.supabase_uid,
-              name: currentSession.user?.user_metadata?.full_name || currentSession.user?.email?.split('@')[0] || 'Unknown',
-              email: data.email,
-              role: data.role as Role
-            });
-          } else {
-            setUser(mapSupabaseUser(currentSession.user));
-          }
-        } catch (e) {
-          setUser(mapSupabaseUser(currentSession.user));
+          setUser(JSON.parse(storedUser));
+          setDemoToken(storedToken);
+        } catch {
+          localStorage.removeItem(STORAGE_KEY_USER);
+          localStorage.removeItem(STORAGE_KEY_TOKEN);
         }
-      } else {
-        setUser(null);
       }
       setIsLoading(false);
-    });
+      return;
+    }
 
-    // Listen for auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, currentSession) => {
-      setSession(currentSession);
-      if (currentSession) {
-        try {
-          const res = await fetch(import.meta.env.VITE_API_BASE_URL + '/users/me', {
-            headers: {
-              'Authorization': `Bearer ${currentSession.access_token}`
-            }
-          });
-          if (res.ok) {
-            const data = await res.json();
-            setUser({
-              id: data.supabase_uid,
-              name: currentSession.user?.user_metadata?.full_name || currentSession.user?.email?.split('@')[0] || 'Unknown',
-              email: data.email,
-              role: data.role as Role
+    // ── Production: Supabase auth ───────────────────────────────────────────
+    (async () => {
+      try {
+        const { supabase } = await import('../services/supabase');
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
+        if (currentSession) {
+          try {
+            const res = await fetch(API_BASE + '/users/me', {
+              headers: { 'Authorization': `Bearer ${currentSession.access_token}` }
             });
-          } else {
-            setUser(mapSupabaseUser(currentSession.user));
+            if (res.ok) {
+              const data = await res.json();
+              setUser({
+                id: data.supabase_uid,
+                name: currentSession.user?.user_metadata?.full_name || currentSession.user?.email?.split('@')[0] || 'Unknown',
+                email: data.email,
+                role: data.role as Role,
+              });
+            } else {
+              const su = currentSession.user;
+              setUser({
+                id: su.id,
+                name: su.user_metadata?.full_name || su.email?.split('@')[0] || 'Unknown',
+                email: su.email || '',
+                role: (su.user_metadata?.role?.toLowerCase() || 'intern') as Role,
+              });
+            }
+          } catch {
+            const su = currentSession.user;
+            setUser({
+              id: su.id,
+              name: su.user_metadata?.full_name || su.email?.split('@')[0] || 'Unknown',
+              email: su.email || '',
+              role: (su.user_metadata?.role?.toLowerCase() || 'intern') as Role,
+            });
           }
-        } catch (e) {
-          setUser(mapSupabaseUser(currentSession.user));
         }
-      } else {
-        setUser(null);
+      } catch (e) {
+        console.warn('[AuthContext] Supabase init failed:', e);
+      } finally {
+        setIsLoading(false);
       }
-      setIsLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
+    })();
   }, []);
 
-  const signIn = async (email: string, password?: string) => {
+  // ── signIn ────────────────────────────────────────────────────────────────
+  const signIn = async (email: string, password?: string): Promise<{ error?: string }> => {
     setIsLoading(true);
-    let result;
-    if (password) {
-      result = await supabase.auth.signInWithPassword({ email, password });
-    } else {
-      result = await supabase.auth.signInWithOtp({ email });
+    try {
+      if (DEMO_MODE) {
+        // Call the demo login endpoint
+        const res = await fetch(`${API_BASE}/demo/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password: password || '' }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: 'Login failed' }));
+          return { error: err.detail || 'Invalid credentials' };
+        }
+        const data = await res.json();
+        const u: User = {
+          id: email,
+          name: data.name,
+          email: data.email,
+          role: data.role as Role,
+        };
+        setUser(u);
+        setDemoToken(data.token);
+        localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(u));
+        localStorage.setItem(STORAGE_KEY_TOKEN, data.token);
+        return {};
+      }
+
+      // Production Supabase login
+      const { supabase } = await import('../services/supabase');
+      let result;
+      if (password) {
+        result = await supabase.auth.signInWithPassword({ email, password });
+      } else {
+        result = await supabase.auth.signInWithOtp({ email });
+      }
+      if (result.error) {
+        return { error: result.error.message };
+      }
+      return {};
+    } finally {
+      setIsLoading(false);
     }
-    const { error } = result;
-    setIsLoading(false);
-    if (error) {
-      return { error: error.message };
-    }
-    return {};
   };
 
+  // ── signOut ───────────────────────────────────────────────────────────────
   const signOut = async () => {
     setIsLoading(true);
-    await supabase.auth.signOut();
+    if (DEMO_MODE) {
+      setUser(null);
+      setDemoToken(null);
+      localStorage.removeItem(STORAGE_KEY_USER);
+      localStorage.removeItem(STORAGE_KEY_TOKEN);
+    } else {
+      try {
+        const { supabase } = await import('../services/supabase');
+        await supabase.auth.signOut();
+      } catch {
+        // ignore
+      }
+      setUser(null);
+    }
     setIsLoading(false);
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, signIn, signOut, session }}>
+    <AuthContext.Provider value={{ user, isLoading, signIn, signOut, demoToken }}>
       {children}
     </AuthContext.Provider>
   );

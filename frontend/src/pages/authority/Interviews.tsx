@@ -16,7 +16,7 @@ export function Interviews() {
     });
   }, []);
 
-  const handleAssign = async (assessmentId: number) => {
+  const handleAssign = async (assessmentId: number | string) => {
     const email = window.prompt("Enter Candidate email to assign to:");
     if (!email) return;
     

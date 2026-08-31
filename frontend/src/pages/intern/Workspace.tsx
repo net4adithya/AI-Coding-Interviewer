@@ -1,355 +1,626 @@
-import { useState, useEffect, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+// frontend/src/pages/intern/Workspace.tsx
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
-import { assessmentsService, AssessmentResponse } from '../../services/assessments';
-import { editorService, EditorSessionResponse } from '../../services/editor';
-import { executionService, ExecutionTestCaseResultResponse } from '../../services/execution';
+import { demoService } from '../../services/demoApi';
+import { runWorkspaceCode, runWorkspaceTestCases } from '../../services/workspaceExecution';
+import {
+  DEFAULT_WORKSPACE_LANGUAGE,
+  WORKSPACE_LANGUAGES,
+  getStarterCode,
+  getWorkspaceLanguage,
+  resolveAssessmentLanguage,
+} from '@/constants/workspaceLanguages';
+import type { WorkspaceExecutionRequest } from '@/types/workspace';
+
+/** questionId -> languageId -> source code */
+type CodeByQuestion = Record<string, Record<string, string>>;
+/** questionId -> active language */
+type LanguageByQuestion = Record<string, string>;
+/** questionId -> custom stdin */
+type StdinByQuestion = Record<string, string>;
+
+function DiffBadge({ diff }: { diff: string }) {
+  const cls =
+    diff === 'Easy'
+      ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+      : diff === 'Medium'
+        ? 'bg-amber-100 text-amber-700 border-amber-200'
+        : 'bg-rose-100 text-rose-700 border-rose-200';
+  return <span className={`px-sm py-[2px] rounded border text-xs font-medium ${cls}`}>{diff}</span>;
+}
+
+function useTimer(durationMinutes: number) {
+  const [timeLeft, setTimeLeft] = useState(durationMinutes * 60);
+
+  useEffect(() => {
+    if (durationMinutes > 0) {
+      setTimeLeft(durationMinutes * 60);
+    }
+  }, [durationMinutes]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTimeLeft((t) => Math.max(0, t - 1));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const mins = Math.floor(timeLeft / 60);
+  const secs = timeLeft % 60;
+  return {
+    display: `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`,
+    isWarning: timeLeft < 300,
+    timeRemaining: timeLeft,
+  };
+}
 
 export function Workspace() {
   const navigate = useNavigate();
 
-  const [assessment, setAssessment] = useState<AssessmentResponse | null>(null);
+  const [assessment, setAssessment] = useState<any>(null);
   const [questions, setQuestions] = useState<any[]>([]);
-  const [currentQuestionIdx, setCurrentQuestionIdx] = useState<number>(0);
-  const [session, setSession] = useState<EditorSessionResponse | null>(null);
-  const [code, setCode] = useState<string>('');
-  const [isSaving, setIsSaving] = useState<boolean>(false);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [testResults, setTestResults] = useState<ExecutionTestCaseResultResponse[] | null>(null);
-  const [isExecuting, setIsExecuting] = useState<boolean>(false);
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
 
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [codeByQuestion, setCodeByQuestion] = useState<CodeByQuestion>({});
+  const [languageByQuestion, setLanguageByQuestion] = useState<LanguageByQuestion>({});
+  const [stdinByQuestion, setStdinByQuestion] = useState<StdinByQuestion>({});
 
-  useEffect(() => {
-    async function loadWorkspace() {
-      try {
-        const myAss = await assessmentsService.getMyAssessment();
-        setAssessment(myAss);
-        
-        const qList = await assessmentsService.getAssessmentQuestions(myAss.id);
-        setQuestions(qList);
+  const [runResult, setRunResult] = useState<any>(null);
+  const [isRunning, setIsRunning] = useState(false);
+  const [runError, setRunError] = useState('');
+  const [testResults, setTestResults] = useState<any[] | null>(null);
+  const [isTestRunning, setIsTestRunning] = useState(false);
+  const [activeTab, setActiveTab] = useState<'input' | 'output' | 'tests'>('input');
 
-        if (qList.length > 0) {
-          await loadQuestion(0, myAss, qList);
-        }
-      } catch (err) {
-        console.error("Failed to load workspace:", err);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    loadWorkspace();
+  const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const durationMinutes = assessment?.duration_minutes || 60;
+  const timer = useTimer(durationMinutes);
+
+  const currentQ = questions[currentIdx];
+  const currentQId = currentQ?.id as string | undefined;
+  const selectedLanguage = currentQId
+    ? languageByQuestion[currentQId] ?? DEFAULT_WORKSPACE_LANGUAGE
+    : DEFAULT_WORKSPACE_LANGUAGE;
+  const customInput = currentQId ? stdinByQuestion[currentQId] ?? '' : '';
+
+  const currentCode = useMemo(() => {
+    if (!currentQId) return getStarterCode(selectedLanguage);
+    return codeByQuestion[currentQId]?.[selectedLanguage] ?? getStarterCode(selectedLanguage);
+  }, [codeByQuestion, currentQId, selectedLanguage]);
+
+  const ensureQuestionState = useCallback((qId: string, lang: string) => {
+    setCodeByQuestion((prev) => {
+      if (prev[qId]?.[lang] !== undefined) return prev;
+      return { ...prev, [qId]: { ...prev[qId], [lang]: getStarterCode(lang) } };
+    });
+    setLanguageByQuestion((prev) => (prev[qId] ? prev : { ...prev, [qId]: lang }));
   }, []);
 
-  const loadQuestion = async (idx: number, ass: AssessmentResponse | null = assessment, qList: any[] = questions) => {
-    if (!ass || !qList[idx]) return;
-    
-    setIsLoading(true);
-    setTestResults(null);
-    try {
-      const sess = await editorService.getSession(ass.assignment_id || 0, ass.id, qList[idx].id);
-      setSession(sess);
-      setCode(sess.code || (sess as any).template?.code || '');
-      setCurrentQuestionIdx(idx);
-    } catch (err) {
-      console.error("Failed to load session:", err);
-    } finally {
-      setIsLoading(false);
-    }
+  useEffect(() => {
+    demoService
+      .getMyAssignment()
+      .then((data) => {
+        if (data.assignment?.status === 'COMPLETED') {
+          navigate('/intern/interview/completed');
+          return;
+        }
+        const ass = data.assessment;
+        setAssessment(ass);
+        const qList = ass.questions || [];
+        setQuestions(qList);
+
+        const defaultLang = resolveAssessmentLanguage(ass.language);
+        qList.forEach((q: { id: string }) => ensureQuestionState(q.id, defaultLang));
+        if (qList.length > 0) {
+          setLanguageByQuestion({ [qList[0].id]: defaultLang });
+        }
+      })
+      .catch((err) => setLoadError(err.message))
+      .finally(() => setIsLoading(false));
+  }, [navigate, ensureQuestionState]);
+
+  const handleLanguageChange = (newLang: string) => {
+    if (!currentQId) return;
+    ensureQuestionState(currentQId, newLang);
+    setLanguageByQuestion((prev) => ({ ...prev, [currentQId]: newLang }));
   };
 
   const handleCodeChange = (value: string | undefined) => {
-    if (!value) return;
-    setCode(value);
-    
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-    }
-    setIsSaving(true);
-    saveTimeoutRef.current = setTimeout(async () => {
-      try {
-        if (session && assessment && assessment.assignment_id) {
-          await editorService.saveDraft({
-            assignment_id: assessment.assignment_id,
-            assessment_id: assessment.id,
-            question_id: questions[currentQuestionIdx].id,
-            language: session.language,
-            code: value
-          });
-        }
-      } catch (e) {
-        console.error("Autosave failed", e);
-      } finally {
-        setIsSaving(false);
-      }
-    }, 1500);
+    if (value === undefined || !currentQId) return;
+    setCodeByQuestion((prev) => ({
+      ...prev,
+      [currentQId]: { ...prev[currentQId], [selectedLanguage]: value },
+    }));
   };
 
-  const handleRunCode = async () => {
-    if (!session || !assessment || !assessment.assignment_id) return;
-    setIsExecuting(true);
+  const handleStdinChange = (value: string) => {
+    if (!currentQId) return;
+    setStdinByQuestion((prev) => ({ ...prev, [currentQId]: value }));
+  };
+
+  const handleSelectQuestion = (idx: number) => {
+    const q = questions[idx];
+    if (!q) return;
+    setCurrentIdx(idx);
+    setRunResult(null);
     setTestResults(null);
+    setRunError('');
+    const lang = languageByQuestion[q.id] ?? selectedLanguage;
+    ensureQuestionState(q.id, lang);
+  };
+
+  const buildExecutionRequest = (): WorkspaceExecutionRequest | null => {
+    if (!currentQId || !currentCode.trim()) return null;
+    return {
+      question_id: currentQId,
+      language: selectedLanguage,
+      source_code: currentCode,
+      stdin: customInput,
+    };
+  };
+
+  const handleRun = async () => {
+    const request = buildExecutionRequest();
+    if (!request) {
+      setRunError('Please write some code first.');
+      return;
+    }
+    setIsRunning(true);
+    setRunResult(null);
+    setRunError('');
+    setActiveTab('output');
     try {
-      // First ensure draft is saved
-      await editorService.saveDraft({
-        assignment_id: assessment.assignment_id,
-        assessment_id: assessment.id,
-        question_id: questions[currentQuestionIdx].id,
-        language: session.language,
-        code: code
-      });
-      
-      // Submit the draft to create a submission record for execution
-      const submission = await editorService.submitDraft({ draft_id: session.draft_id });
-      
-      // Trigger execution pipeline
-      await executionService.triggerExecution(submission.id);
-      
-      // Poll for results
-      let attempts = 0;
-      const poll = setInterval(async () => {
-        attempts++;
-        try {
-          const summary = await executionService.getExecutionSummary(submission.id);
-          if (summary.results && summary.results.length > 0) {
-            setTestResults(summary.results);
-            clearInterval(poll);
-            setIsExecuting(false);
-          }
-        } catch (e) {
-          // It might return 404 while processing
-        }
-        if (attempts > 15) {
-          clearInterval(poll);
-          setIsExecuting(false);
-          alert("Execution timed out or failed to return results.");
-        }
-      }, 2000);
-      
-    } catch (e) {
-      console.error("Failed to execute code:", e);
-      setIsExecuting(false);
-      alert("Failed to run code.");
+      const result = await runWorkspaceCode(request);
+      setRunResult(result);
+    } catch (err: any) {
+      setRunError(err.message || 'Code execution failed.');
+    } finally {
+      setIsRunning(false);
     }
   };
 
-  const handleSubmit = () => {
-    // Navigate to completed
-    navigate('/intern/interview/completed');
+  const handleRunTests = async () => {
+    if (!currentCode.trim()) return;
+    const testCasesToRun = currentQ?.test_cases?.filter((tc: any) => !tc.is_hidden) || [];
+    const sampleTests =
+      testCasesToRun.length > 0
+        ? testCasesToRun
+        : (currentQ?.examples || []).map((ex: any) => ({
+            input: ex.input || '',
+            expected_output: ex.output || '',
+          }));
+
+    if (!sampleTests.length) {
+      alert('No sample test cases available for this question.');
+      return;
+    }
+
+    setIsTestRunning(true);
+    setTestResults(null);
+    setActiveTab('tests');
+    try {
+      const result = await runWorkspaceTestCases(
+        currentCode,
+        selectedLanguage,
+        sampleTests.map((tc: any) => ({
+          input: tc.input || '',
+          expected_output: tc.expected_output || tc.output || '',
+        })),
+      );
+      setTestResults(result.results);
+    } catch (err: any) {
+      setRunError(err.message || 'Test execution failed.');
+    } finally {
+      setIsTestRunning(false);
+    }
   };
 
-  if (isLoading && !assessment) {
-    return <div className="p-xl text-secondary">Loading Workspace...</div>;
+  const handleSubmit = async () => {
+    setIsSubmitting(true);
+    try {
+      const finalCodeByQ: Record<string, { language: string; code: string }> = {};
+      for (const q of questions) {
+        const lang = languageByQuestion[q.id] ?? selectedLanguage;
+        const code = codeByQuestion[q.id]?.[lang] ?? getStarterCode(lang);
+        finalCodeByQ[q.id] = { language: lang, code };
+      }
+      if (currentQId) {
+        finalCodeByQ[currentQId] = { language: selectedLanguage, code: currentCode };
+      }
+      await demoService.submitAssessment({
+        assessment_id: assessment.id,
+        code_by_question: finalCodeByQ,
+        final_language: selectedLanguage,
+      });
+      navigate('/intern/interview/completed');
+    } catch (err: any) {
+      alert(`Submission failed: ${err.message}`);
+      setIsSubmitting(false);
+    }
+    setShowSubmitConfirm(false);
+  };
+
+  const monacoLang = getWorkspaceLanguage(selectedLanguage)?.monacoLang ?? 'python';
+  const fileExt = getWorkspaceLanguage(selectedLanguage)?.fileExtension ?? 'py';
+  const passedTests = testResults ? testResults.filter((r) => r.passed).length : 0;
+
+  if (isLoading) {
+    return (
+      <div className="fixed inset-0 bg-[#1a1a2e] flex items-center justify-center">
+        <div className="flex items-center gap-sm text-[#a0aec0]">
+          <span className="material-symbols-outlined animate-spin">sync</span>
+          Loading workspace...
+        </div>
+      </div>
+    );
   }
 
-  const currentQ = questions[currentQuestionIdx];
+  if (loadError || !assessment) {
+    return (
+      <div className="fixed inset-0 bg-[#1a1a2e] flex flex-col items-center justify-center p-xl text-center">
+        <span className="material-symbols-outlined text-[64px] text-rose-400 mb-md">error</span>
+        <h2 className="text-xl font-bold text-white mb-xs">Unable to Load Workspace</h2>
+        <p className="text-[#a0aec0] mb-lg max-w-md">{loadError || 'Assessment data is missing.'}</p>
+        <button
+          onClick={() => navigate('/intern/interview/overview')}
+          className="bg-[#e94560] text-white px-md py-sm rounded cursor-pointer"
+        >
+          Return to Overview
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <div className="fixed inset-0 z-[100] bg-background flex flex-col font-body-main text-on-surface overflow-hidden">
-      {/* Header / TopNav */}
-      <header className="bg-surface border-b border-outline-variant w-full h-[60px] flex-shrink-0 flex items-center justify-between px-md md:px-lg z-10">
-        <div className="flex items-center gap-md">
-          <Link to="/intern/interview/overview" className="text-primary flex items-center">
-            <img 
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuAsAALUGls9X_ukxQ3LUjcJMtHjDJV41JzsanPpASHDI841QSOtNrOwTGXuOhkligpBC6cDZ5XquGy-dKWQkg2iZmx3Y6pQ6rFyfQD36zsbfgy6lsGe8s9PD9CXzwetJnU95HJb6SJ9qeURvtOH01l4Q9fYP2kbZKkGChkxgo7pgei5iL_pVTKXo1LSXEIJgOtYH58vuDAXEeWQxTM1o0o9WsgZ6IcM83zfSKL2T8ae88tf7jcxscYrPSQqYoqGzZbZig" 
-              alt="Thozhil Logo" 
-              className="w-[120px] h-auto" 
-            />
-          </Link>
-          <div className="w-[1px] h-lg bg-outline-variant hidden md:block"></div>
-          <span className="font-card-title text-card-title hidden md:block">{assessment?.title || "Technical Interview"}</span>
+    <div className="fixed inset-0 z-[100] bg-[#1a1a2e] flex flex-col font-body-main overflow-hidden text-slate-100">
+      <header className="h-[52px] bg-[#16213e] border-b border-[#0f3460] flex items-center justify-between px-md flex-shrink-0 z-10">
+        <div className="flex items-center gap-md min-w-0">
+          <span className="font-semibold text-white flex items-center gap-xs truncate">
+            <span className="material-symbols-outlined text-[#e94560] text-[20px]">terminal</span>
+            {assessment.title}
+          </span>
+          <span className="text-[#888] text-xs hidden sm:inline">|</span>
+          <span className="text-[#a0aec0] text-xs font-mono hidden sm:inline">{questions.length} Questions</span>
         </div>
-        <div className="flex items-center gap-xl">
-          <div className="flex items-center gap-sm">
-            <span className="material-symbols-outlined text-secondary text-[20px]">dns</span>
-            <span className="font-navigation text-navigation text-secondary">Question {currentQuestionIdx + 1} of {questions.length}</span>
+
+        <div className="flex items-center gap-xs bg-[#0f3460] p-[3px] rounded-lg overflow-x-auto max-w-[40vw]">
+          {questions.map((q, idx) => (
+            <button
+              key={q.id || idx}
+              onClick={() => handleSelectQuestion(idx)}
+              className={`px-3 py-1 rounded text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                currentIdx === idx ? 'bg-[#e94560] text-white' : 'text-[#a0aec0] hover:text-white'
+              }`}
+            >
+              Q{idx + 1}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-md flex-shrink-0">
+          <div
+            className={`flex items-center gap-xs font-mono font-bold text-sm px-sm py-[4px] rounded ${
+              timer.isWarning
+                ? 'bg-rose-900/50 text-rose-300 border border-rose-500/30 animate-pulse'
+                : 'bg-[#0f3460] text-[#e94560]'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[16px]">schedule</span>
+            <span>{timer.display}</span>
           </div>
-          <div className="flex items-center gap-sm bg-surface-container py-xs px-sm rounded">
-            <span className="material-symbols-outlined text-error text-[20px]">timer</span>
-            <span className="font-code-snippet text-code-snippet text-error font-bold">42:18</span>
-          </div>
-          <div className="flex items-center gap-xs hidden md:flex min-w-[80px]">
-            {isSaving ? (
-              <>
-                <span className="material-symbols-outlined text-secondary text-[18px] animate-spin">sync</span>
-                <span className="font-metadata text-metadata text-secondary">Saving...</span>
-              </>
-            ) : (
-              <>
-                <span className="material-symbols-outlined text-primary-container text-[18px]">cloud_done</span>
-                <span className="font-metadata text-metadata text-secondary">Saved</span>
-              </>
-            )}
-          </div>
+          <button
+            onClick={() => setShowSubmitConfirm(true)}
+            className="bg-[#e94560] hover:bg-[#d03b53] text-white text-xs font-bold px-md py-[6px] rounded flex items-center gap-xs cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[16px]">send</span>
+            Submit
+          </button>
         </div>
       </header>
 
-      {/* Main Workspace */}
-      <main className="flex-1 flex overflow-hidden">
-        {/* Left Panel: Problem Description */}
-        <section className="w-[38%] h-full flex flex-col border-r border-outline-variant bg-surface-container-lowest overflow-y-auto">
+      <main className="flex-1 flex min-h-0 overflow-hidden">
+        <aside className="w-[38%] min-w-[280px] max-w-[480px] flex flex-col border-r border-[#0f3460] bg-[#16213e] overflow-y-auto">
           {currentQ ? (
-            <div className="p-lg flex flex-col gap-lg">
-              {/* Problem Header */}
-              <div className="flex flex-col gap-sm border-b border-outline-variant pb-md">
-                <h1 className="font-page-title text-page-title">{String(currentQuestionIdx + 1).padStart(2, '0')} {currentQ.title}</h1>
-                <div className="flex items-center gap-sm">
-                  <span className="bg-surface-container text-primary-container px-sm py-[2px] rounded text-metadata font-medium border border-primary-fixed-dim">{currentQ.difficulty || "Medium"}</span>
-                  <span className="bg-surface-variant text-on-surface-variant px-sm py-[2px] rounded text-metadata">{currentQ.topic || "General"}</span>
+            <div className="p-lg flex flex-col gap-md text-xs">
+              <div className="flex items-center justify-between gap-sm border-b border-[#0f3460] pb-sm">
+                <h2 className="font-bold text-base text-white">
+                  Q{currentIdx + 1}. {currentQ.title}
+                </h2>
+                <DiffBadge diff={currentQ.difficulty} />
+              </div>
+
+              <div>
+                <span className="text-[#888] font-bold uppercase tracking-wider block mb-xs text-[10px]">
+                  Problem Statement
+                </span>
+                <p className="text-[#cbd5e0] leading-relaxed whitespace-pre-wrap">{currentQ.problem_statement}</p>
+              </div>
+
+              {currentQ.constraints && (
+                <div>
+                  <span className="text-[#888] font-bold uppercase tracking-wider block mb-xs text-[10px]">Constraints</span>
+                  <pre className="bg-[#0f3460]/50 text-[#a0aec0] p-sm rounded border border-[#0f3460] font-mono whitespace-pre-wrap">
+                    {currentQ.constraints}
+                  </pre>
                 </div>
-              </div>
+              )}
 
-              {/* Problem Description */}
-              <div className="flex flex-col gap-sm">
-                <h2 className="font-section-heading text-section-heading">Problem Description</h2>
-                <p className="font-body-main text-body-main text-on-surface-variant whitespace-pre-wrap">
-                  {currentQ.problem_statement}
-                </p>
-              </div>
+              {currentQ.input_format && (
+                <div>
+                  <span className="text-[#888] font-bold uppercase tracking-wider block mb-xs text-[10px]">Input Format</span>
+                  <p className="text-[#cbd5e0] leading-relaxed">{currentQ.input_format}</p>
+                </div>
+              )}
 
-              {/* Examples */}
-              {currentQ.examples && currentQ.examples.length > 0 && (
+              {currentQ.output_format && (
+                <div>
+                  <span className="text-[#888] font-bold uppercase tracking-wider block mb-xs text-[10px]">Output Format</span>
+                  <p className="text-[#cbd5e0] leading-relaxed">{currentQ.output_format}</p>
+                </div>
+              )}
+
+              {currentQ.examples?.length > 0 && (
                 <div className="flex flex-col gap-sm">
-                  <h2 className="font-section-heading text-section-heading">Examples</h2>
-                  {currentQ.examples.map((ex: any, i: number) => (
-                    <div key={i} className="bg-surface-container-low border border-outline-variant rounded-lg p-md flex flex-col gap-xs mt-sm">
-                      <span className="font-card-title text-card-title">Example {i + 1}:</span>
-                      <div className="font-code-snippet text-code-snippet bg-surface-container p-sm rounded text-on-surface whitespace-pre-wrap">
-                        <strong>Input:</strong> {ex.input}<br />
-                        <strong>Output:</strong> {ex.output}
-                        {ex.explanation && <><br /><strong>Explanation:</strong> {ex.explanation}</>}
+                  <span className="text-[#888] font-bold uppercase tracking-wider text-[10px]">Examples</span>
+                  {currentQ.examples.map((ex: any, idx: number) => (
+                    <div key={idx} className="bg-[#0f3460]/40 p-sm rounded border border-[#0f3460] font-mono text-[11px]">
+                      <div>
+                        <span className="text-[#888]">Input:</span> <span className="text-white">{ex.input}</span>
                       </div>
+                      <div>
+                        <span className="text-[#888]">Output:</span>{' '}
+                        <span className="text-emerald-400">{ex.output}</span>
+                      </div>
+                      {ex.explanation && <div className="mt-xs text-[#a0aec0] italic">{ex.explanation}</div>}
                     </div>
                   ))}
                 </div>
               )}
-
-              {/* Constraints */}
-              {currentQ.constraints && (
-                <div className="flex flex-col gap-sm mb-xl">
-                  <h2 className="font-section-heading text-section-heading">Constraints</h2>
-                  <div className="font-code-snippet text-code-snippet text-on-surface-variant bg-surface-container-low p-md rounded-lg border border-outline-variant whitespace-pre-wrap">
-                    {currentQ.constraints}
-                  </div>
-                </div>
-              )}
             </div>
           ) : (
-            <div className="p-lg text-secondary">No question data available.</div>
+            <div className="p-md text-[#718096]">No question selected.</div>
           )}
-        </section>
+        </aside>
 
-        {/* Right Panel: Editor & Output */}
-        <section className="w-[62%] h-full flex flex-col bg-[#1e1e1e]">
-          {/* Editor Header */}
-          <div className="h-[48px] bg-[#252526] border-b border-[#3c3c3c] flex items-center justify-between px-md flex-shrink-0">
+        <section className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#1e1e1e]">
+          <div className="h-[44px] bg-[#252526] border-b border-[#3c3c3c] flex items-center justify-between px-md flex-shrink-0">
             <div className="flex items-center gap-sm">
-              <span className="material-symbols-outlined text-[#569cd6] text-[18px]">code</span>
-              <span className="font-navigation text-navigation text-[#cccccc]">solution.{session?.language === 'python' ? 'py' : 'txt'}</span>
+              <span className="material-symbols-outlined text-[#569cd6] text-[16px]">code</span>
+              <span className="text-[#cccccc] text-sm font-mono">solution.{fileExt}</span>
             </div>
-            <div className="flex items-center">
-              <select 
-                className="bg-[#3c3c3c] text-[#cccccc] border-none font-code-snippet text-code-snippet py-xs px-sm rounded cursor-pointer focus:ring-1 focus:ring-primary-container outline-none appearance-none"
-                value={session?.language || 'python'}
-                disabled
-              >
-                <option value="python">Python 3</option>
-              </select>
-            </div>
+            <select
+              value={selectedLanguage}
+              onChange={(e) => handleLanguageChange(e.target.value)}
+              className="bg-[#3c3c3c] text-[#cccccc] border border-[#555] text-xs py-[4px] px-sm rounded cursor-pointer outline-none"
+            >
+              {WORKSPACE_LANGUAGES.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
           </div>
 
-          {/* Code Editor Area */}
-          <div className="flex-1 overflow-hidden relative">
+          <div className="flex-1 min-h-0">
             <Editor
+              key={`${currentQId}-${selectedLanguage}`}
               height="100%"
-              language={session?.language || "python"}
+              language={monacoLang}
               theme="vs-dark"
-              value={code}
+              value={currentCode}
               onChange={handleCodeChange}
+              loading={
+                <div className="h-full flex items-center justify-center text-[#888] text-sm">Loading editor...</div>
+              }
               options={{
                 minimap: { enabled: false },
                 fontSize: 14,
-                fontFamily: "'JetBrains Mono', monospace",
+                fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace",
                 lineHeight: 24,
                 padding: { top: 16 },
                 scrollBeyondLastLine: false,
-                readOnly: session?.is_locked || false
+                wordWrap: 'on',
+                automaticLayout: true,
+                tabSize: 4,
               }}
             />
           </div>
 
-          {/* Editor Footer / Actions */}
-          <div className="h-[60px] bg-[#252526] border-t border-[#3c3c3c] flex items-center justify-between px-md flex-shrink-0">
-            <button className="bg-[#3c3c3c] hover:bg-[#4f4f4f] text-[#cccccc] border border-[#555555] font-navigation text-navigation py-[6px] px-md rounded transition-colors flex items-center gap-xs">
-              <span className="material-symbols-outlined text-[18px]">terminal</span>
-              Console
-            </button>
-            <div className="flex gap-sm">
-              <button 
-                onClick={handleRunCode}
-                disabled={isExecuting || session?.is_locked}
-                className="bg-transparent hover:bg-[#3c3c3c] text-[#cccccc] border border-[#555555] font-navigation text-navigation py-[6px] px-md rounded transition-colors disabled:opacity-50"
+          <div className="h-[52px] bg-[#252526] border-t border-[#3c3c3c] flex items-center justify-between px-md flex-shrink-0">
+            <div className="flex items-center gap-sm">
+              <button
+                onClick={handleRun}
+                disabled={isRunning}
+                className="bg-[#0f7b0f] hover:bg-[#0d6b0d] text-white text-sm font-medium px-md py-[6px] rounded disabled:opacity-50 flex items-center gap-xs cursor-pointer"
               >
-                {isExecuting ? 'Running...' : 'Run Code'}
+                {isRunning ? (
+                  <>
+                    <span className="material-symbols-outlined text-[14px] animate-spin">sync</span> Running...
+                  </>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined text-[14px]">play_arrow</span> Run Code
+                  </>
+                )}
               </button>
-              <button 
-                onClick={handleSubmit} 
-                className="bg-primary-container hover:bg-primary text-on-primary font-navigation text-navigation py-[6px] px-md rounded transition-colors inline-block text-center cursor-pointer"
+              <button
+                onClick={handleRunTests}
+                disabled={isTestRunning}
+                className="bg-transparent hover:bg-[#3c3c3c] text-[#cccccc] border border-[#555] text-sm px-md py-[6px] rounded disabled:opacity-50 flex items-center gap-xs cursor-pointer"
               >
-                Submit Interview
+                {isTestRunning ? (
+                  <>
+                    <span className="material-symbols-outlined text-[14px] animate-spin">sync</span> Testing...
+                  </>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined text-[14px]">checklist</span> Run Tests
+                  </>
+                )}
               </button>
             </div>
+            {testResults && (
+              <span
+                className={`text-xs font-bold ${passedTests === testResults.length ? 'text-emerald-400' : 'text-rose-400'}`}
+              >
+                {passedTests}/{testResults.length} tests passed
+              </span>
+            )}
           </div>
 
-          {/* Output Panel */}
-          {testResults && (
-            <div className="bg-[#1e1e1e] border-t border-[#3c3c3c] h-[150px] flex flex-col flex-shrink-0">
-              <div className="px-md py-xs border-b border-[#3c3c3c] flex items-center justify-between bg-[#252526]">
-                <span className="font-navigation text-navigation text-[#cccccc] flex items-center gap-xs">
-                  <span className="material-symbols-outlined text-[16px]">checklist</span> Test Results
-                </span>
-                <span className={`font-code-snippet text-metadata ${testResults.every(r => r.is_passed) ? 'text-[#89d185]' : 'text-[#f48771]'}`}>
-                  {testResults.filter(r => r.is_passed).length}/{testResults.length} Passed
-                </span>
-              </div>
-              <div className="p-sm overflow-auto flex flex-col gap-xs">
-                {testResults.map((r, i) => (
-                  <div key={r.id} className="flex items-center gap-sm text-[#cccccc] font-code-snippet text-metadata">
-                    {r.is_passed ? (
-                      <span className="material-symbols-outlined text-[#89d185] text-[16px]">check_circle</span>
-                    ) : (
-                      <span className="material-symbols-outlined text-[#f48771] text-[16px]">cancel</span>
-                    )}
-                    Test Case {i + 1}
-                    {!r.is_passed && <span className="text-[#f48771]">- Failed</span>}
-                  </div>
-                ))}
-              </div>
+          <div className="h-[200px] bg-[#1e1e1e] border-t border-[#3c3c3c] flex flex-col flex-shrink-0">
+            <div className="flex border-b border-[#3c3c3c] bg-[#252526]">
+              {[
+                { id: 'input', label: 'Custom Input', icon: 'input' },
+                { id: 'output', label: 'Output', icon: 'terminal' },
+                { id: 'tests', label: 'Test Results', icon: 'checklist' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as 'input' | 'output' | 'tests')}
+                  className={`flex items-center gap-xs px-md py-xs text-xs cursor-pointer ${
+                    activeTab === tab.id
+                      ? 'text-[#cccccc] border-b-2 border-[#569cd6]'
+                      : 'text-[#888] hover:text-[#cccccc]'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[14px]">{tab.icon}</span>
+                  {tab.label}
+                </button>
+              ))}
             </div>
-          )}
+
+            <div className="flex-1 min-h-0 overflow-auto p-sm font-mono text-xs">
+              {activeTab === 'input' && (
+                <textarea
+                  value={customInput}
+                  onChange={(e) => handleStdinChange(e.target.value)}
+                  className="w-full h-full min-h-[120px] bg-transparent text-[#cccccc] font-mono text-xs resize-none outline-none placeholder:text-[#555]"
+                  placeholder="Enter custom stdin input here..."
+                />
+              )}
+
+              {activeTab === 'output' && (
+                <div>
+                  {isRunning ? (
+                    <div className="flex items-center gap-xs text-[#888]">
+                      <span className="material-symbols-outlined text-[14px] animate-spin">sync</span>
+                      Executing...
+                    </div>
+                  ) : runError ? (
+                    <div className="text-rose-400">{runError}</div>
+                  ) : runResult ? (
+                    <div className="flex flex-col gap-xs">
+                      <div
+                        className={`flex items-center gap-xs font-bold ${runResult.passed ? 'text-emerald-400' : 'text-amber-400'}`}
+                      >
+                        <span className="material-symbols-outlined text-[14px]">
+                          {runResult.passed ? 'check_circle' : 'info'}
+                        </span>
+                        Status: {runResult.status}
+                        {runResult.execution_time != null && (
+                          <span className="text-[#888] font-normal">({runResult.execution_time}s)</span>
+                        )}
+                      </div>
+                      {runResult.stdout && (
+                        <div>
+                          <span className="text-[#888] block">stdout:</span>
+                          <pre className="text-[#e2e8f0] mt-xs whitespace-pre-wrap">{runResult.stdout}</pre>
+                        </div>
+                      )}
+                      {runResult.stderr && (
+                        <div>
+                          <span className="text-rose-400 block">stderr:</span>
+                          <pre className="text-rose-300 mt-xs whitespace-pre-wrap">{runResult.stderr}</pre>
+                        </div>
+                      )}
+                      {runResult.compile_output && (
+                        <div>
+                          <span className="text-amber-400 block">compile output:</span>
+                          <pre className="text-amber-300 mt-xs whitespace-pre-wrap">{runResult.compile_output}</pre>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-[#555]">Click &quot;Run Code&quot; to execute with custom input.</span>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'tests' && (
+                <div>
+                  {isTestRunning ? (
+                    <div className="flex items-center gap-xs text-[#888]">
+                      <span className="material-symbols-outlined text-[14px] animate-spin">sync</span>
+                      Running test cases...
+                    </div>
+                  ) : testResults ? (
+                    <div className="flex flex-col gap-xs">
+                      <div
+                        className={`text-sm font-bold ${passedTests === testResults.length ? 'text-emerald-400' : 'text-rose-400'}`}
+                      >
+                        {passedTests}/{testResults.length} Test Cases Passed
+                      </div>
+                      {testResults.map((r: any, i: number) => (
+                        <div
+                          key={i}
+                          className={`flex items-center gap-sm p-xs rounded ${r.passed ? 'bg-emerald-900/20' : 'bg-rose-900/20'}`}
+                        >
+                          <span
+                            className={`material-symbols-outlined text-[14px] ${r.passed ? 'text-emerald-400' : 'text-rose-400'}`}
+                          >
+                            {r.passed ? 'check_circle' : 'cancel'}
+                          </span>
+                          <span className="text-[#cccccc]">Test Case {i + 1}</span>
+                          {!r.passed && r.error_message && (
+                            <span className="text-rose-400 text-[11px] ml-auto">{r.error_message}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-[#555]">Click &quot;Run Tests&quot; to test against problem test cases.</span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </section>
       </main>
 
-      {/* Bottom Question Navigator */}
-      <footer className="h-[50px] bg-surface-container border-t border-outline-variant flex items-center justify-center px-lg flex-shrink-0">
-        <div className="flex items-center gap-md">
-          {questions.map((q, idx) => (
-            <div key={q.id} className="flex items-center gap-md">
-              {idx > 0 && <div className="w-md h-[1px] bg-outline-variant"></div>}
-              <button 
-                onClick={() => loadQuestion(idx)}
-                className={`w-[32px] h-[32px] rounded-full flex items-center justify-center font-navigation text-navigation transition-colors ${
-                  idx === currentQuestionIdx 
-                    ? 'bg-primary-container text-on-primary ring-2 ring-primary-container ring-offset-2 ring-offset-surface-container shadow-sm'
-                    : 'bg-surface-container-lowest text-secondary border border-outline-variant hover:bg-surface-variant'
-                }`}
+      {showSubmitConfirm && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[200]">
+          <div className="bg-[#16213e] border border-[#0f3460] rounded-xl p-lg max-w-md w-full mx-md flex flex-col gap-md">
+            <h3 className="text-lg font-bold text-white flex items-center gap-xs">
+              <span className="material-symbols-outlined text-amber-400">warning</span>
+              Confirm Submission
+            </h3>
+            <p className="text-xs text-[#a0aec0]">
+              Once submitted, your answers will be locked and cannot be changed.
+            </p>
+            <div className="flex items-center justify-end gap-sm pt-sm border-t border-[#0f3460]">
+              <button
+                onClick={() => setShowSubmitConfirm(false)}
+                className="px-md py-xs text-xs font-semibold text-[#a0aec0] hover:text-white"
               >
-                {String(idx + 1).padStart(2, '0')}
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={isSubmitting}
+                className="px-md py-xs text-xs font-bold bg-[#e94560] hover:bg-[#d03b53] text-white rounded disabled:opacity-50"
+              >
+                {isSubmitting ? 'Submitting...' : 'Yes, Submit'}
               </button>
             </div>
-          ))}
+          </div>
         </div>
-      </footer>
+      )}
     </div>
   );
 }

@@ -16,11 +16,11 @@ export function QuestionBankDetails() {
 
   useEffect(() => {
     if (id) {
-      fetchBankDetails(parseInt(id, 10));
+      fetchBankDetails(id);
     }
   }, [id]);
 
-  const fetchBankDetails = async (bankId: number) => {
+  const fetchBankDetails = async (bankId: string | number) => {
     try {
       setIsLoading(true);
       const [bankData, questionsData] = await Promise.all([
@@ -46,17 +46,17 @@ export function QuestionBankDetails() {
 
   // Derive summary metrics
   const uniqueTopics = Array.from(new Set(questions.map(q => q.topic)));
-  const easyCount = questions.filter(q => q.difficulty === 'EASY').length;
-  const medCount = questions.filter(q => q.difficulty === 'MEDIUM').length;
-  const hardCount = questions.filter(q => q.difficulty === 'HARD').length;
-  const allLangs = Array.from(new Set(questions.flatMap(q => q.programming_languages)));
+  const easyCount = questions.filter(q => (q.difficulty || '').toUpperCase() === 'EASY').length;
+  const medCount = questions.filter(q => (q.difficulty || '').toUpperCase() === 'MEDIUM').length;
+  const hardCount = questions.filter(q => (q.difficulty || '').toUpperCase() === 'HARD').length;
+  const allLangs = Array.from(new Set(questions.flatMap(q => q.programming_languages || [])));
 
   // Apply filters
   const filteredQuestions = questions.filter(q => {
-    const matchesSearch = q.title.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = (q.title || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchesTopic = topicFilter === 'All' || q.topic === topicFilter;
-    const matchesDiff = difficultyFilter === 'All' || q.difficulty === difficultyFilter.toUpperCase();
-    const matchesLang = languageFilter === 'All' || q.programming_languages.includes(languageFilter);
+    const matchesDiff = difficultyFilter === 'All' || (q.difficulty || '').toUpperCase() === difficultyFilter.toUpperCase();
+    const matchesLang = languageFilter === 'All' || (q.programming_languages || []).includes(languageFilter);
     return matchesSearch && matchesTopic && matchesDiff && matchesLang;
   });
 
@@ -214,12 +214,12 @@ export function QuestionBankDetails() {
                             q.difficulty === 'MEDIUM' ? 'text-amber-600 font-medium' :
                             'text-rose-600 font-medium'
                           }>
-                            {q.difficulty.charAt(0) + q.difficulty.slice(1).toLowerCase()}
+                            {(q.difficulty || 'MEDIUM').charAt(0) + (q.difficulty || 'MEDIUM').slice(1).toLowerCase()}
                           </span>
                         </td>
                         <td className="py-sm px-md text-secondary">{q.expected_time_minutes ? `${q.expected_time_minutes} min` : '-'}</td>
                         <td className="py-sm px-md text-secondary text-[12px] truncate max-w-[150px]">
-                          {q.programming_languages.join(', ')}
+                          {(q.programming_languages || ['Python']).join(', ')}
                         </td>
                       </tr>
                     ))

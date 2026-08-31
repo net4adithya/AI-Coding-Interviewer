@@ -17,7 +17,7 @@ from ai_review.config import GeminiConfig
 def mock_gemini_config():
     return GeminiConfig(
         api_key="test_api_key",
-        model_name="gemini-1.5-flash",
+        model_name="gemini-3.6-flash",
         temperature=0.2,
         max_output_tokens=2048,
         request_timeout=10.0

@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useRef, useEffect } from 'react';
 import { cn } from '@/utils/cn';
 import { useAuth } from '@/contexts/AuthContext';
@@ -14,6 +14,13 @@ export function InternLayout() {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { signOut, user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const isWorkspaceRoute = location.pathname.includes('/workspace');
+
+  // Full-screen coding workspace — no sidebar or app chrome
+  if (isWorkspaceRoute) {
+    return <Outlet />;
+  }
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
