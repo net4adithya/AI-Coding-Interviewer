@@ -66,6 +66,11 @@ export const router = createBrowserRouter([
         path: 'interviews/new',
         element: <CreateInterview />,
       },
+      // Explicit demo route for "Create Assignment"
+      {
+        path: 'create-assignment',
+        element: <CreateInterview />,
+      },
       {
         path: 'interviews/:id/review',
         element: <ReviewInterview />,
@@ -81,7 +86,7 @@ export const router = createBrowserRouter([
     ],
   },
   
-  // Intern Routes
+  // Intern Routes — primary paths
   {
     path: '/intern/interview',
     element: (
@@ -107,6 +112,24 @@ export const router = createBrowserRouter([
         element: <Completed />,
       },
     ],
+  },
+
+  // Intern Routes — alias paths (redirect to primary)
+  {
+    path: '/intern/dashboard',
+    element: <Navigate to="/intern/interview/overview" replace />,
+  },
+  {
+    path: '/intern/instructions',
+    element: <Navigate to="/intern/interview/overview" replace />,
+  },
+  {
+    path: '/intern/workspace',
+    element: <Navigate to="/intern/interview/workspace" replace />,
+  },
+  {
+    path: '/intern/completed',
+    element: <Navigate to="/intern/interview/completed" replace />,
   },
 ]);
 

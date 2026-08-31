@@ -4,9 +4,11 @@
 import enum
 from datetime import datetime
 from sqlalchemy import (
-    Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Index, UniqueConstraint, Enum
+    Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Index, UniqueConstraint, Enum, JSON
 )
 from sqlalchemy.dialects.postgresql import JSONB
+
+JSONType = JSON().with_variant(JSONB, "postgresql")
 
 from app.db.base_class import Base
 
@@ -33,8 +35,8 @@ class QuestionBank(Base):
     filename = Column(String, nullable=False)
     status = Column(String, nullable=False, default="PROCESSING") # PROCESSING, COMPLETED, FAILED
     question_count = Column(Integer, nullable=False, default=0)
-    parsing_errors = Column(JSONB, nullable=True)
-
+    parsing_errors = Column(JSONType, nullable=True)
+ 
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -51,10 +53,10 @@ class Question(Base):
     topic = Column(String, nullable=False, index=True)
     difficulty = Column(Enum(DifficultyEnum), nullable=False, index=True)
     constraints = Column(Text, nullable=True)
-    examples = Column(JSONB, nullable=True) # List of dicts {input, output, explanation}
+    examples = Column(JSONType, nullable=True) # List of dicts {input, output, explanation}
     expected_time_minutes = Column(Integer, nullable=True)
-    programming_languages = Column(JSONB, nullable=False) # List of supported language slugs
-    starter_code = Column(JSONB, nullable=True) # Dict of {language_slug: code}
+    programming_languages = Column(JSONType, nullable=False) # List of supported language slugs
+    starter_code = Column(JSONType, nullable=True) # Dict of {language_slug: code}
 
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -70,9 +72,9 @@ class Assessment(Base):
     total_questions = Column(Integer, nullable=False)
     
     # Example: {"EASY": 2, "MEDIUM": 2, "HARD": 1}
-    difficulty_distribution = Column(JSONB, nullable=False)
+    difficulty_distribution = Column(JSONType, nullable=False)
     # Example: ["Linked List", "Arrays"]
-    topic_tags = Column(JSONB, nullable=True) 
+    topic_tags = Column(JSONType, nullable=True) 
 
     ai_selection_enabled = Column(Boolean, nullable=False, default=True)
     status = Column(Enum(AssessmentStatusEnum), nullable=False, default=AssessmentStatusEnum.DRAFT, index=True)
@@ -89,7 +91,7 @@ class AssessmentQuestion(Base):
     assessment_id = Column(Integer, ForeignKey("assessments.id", ondelete="CASCADE"), primary_key=True)
     question_id = Column(Integer, ForeignKey("questions.id", ondelete="CASCADE"), primary_key=True)
     order_index = Column(Integer, nullable=False)
-    selection_metadata = Column(JSONB, nullable=True) # AI selection audit data
+    selection_metadata = Column(JSONType, nullable=True) # AI selection audit data
 
 
 class AssessmentIntern(Base):

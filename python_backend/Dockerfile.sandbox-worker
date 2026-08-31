@@ -1,0 +1,14 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir redis>=5.0.0 docker>=7.0.0 pydantic pydantic-settings python-dotenv
+
+COPY app/sandbox /app/app/sandbox
+COPY app/__init__.py /app/app/__init__.py
+
+ENV PYTHONPATH=/app
+ENV REDIS_HOST=redis
+ENV REDIS_PORT=6379
+
+CMD ["python", "-m", "app.sandbox.worker"]

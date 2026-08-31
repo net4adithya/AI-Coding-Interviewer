@@ -140,9 +140,9 @@ class EditorSubmissionResponse(BaseModel):
     """Authority-facing detailed submission view."""
 
     submission_id: int
-    assignment_id: Optional[int]
-    assessment_id: Optional[int]
-    question_id: Optional[int]
+    assignment_id: Optional[int] = None
+    assessment_id: Optional[int] = None
+    question_id: Optional[int] = None
     intern_id: int
     language: str
     code: str

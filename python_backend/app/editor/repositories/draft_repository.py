@@ -43,6 +43,10 @@ class DraftRepository:
             )
         return query.first()
 
+    def get_by_assignment_and_intern(self, assignment_id: int, intern_id: int) -> Optional[Draft]:
+        """Return draft by assignment_id and intern_id."""
+        return self.get_unique_draft(intern_id=intern_id, assignment_id=assignment_id)
+
     # ------------------------------------------------------------------
     # Write
     # ------------------------------------------------------------------
@@ -58,6 +62,19 @@ class DraftRepository:
         question_id: Optional[int] = None,
     ) -> Draft:
         """Insert a new Draft and return the persisted object."""
+        existing = self.get_unique_draft(
+            intern_id=intern_id,
+            assignment_id=assignment_id,
+            assessment_id=assessment_id,
+            question_id=question_id,
+        )
+        if existing:
+            raise IntegrityError(
+                statement="INSERT INTO drafts",
+                params={},
+                orig=Exception("UNIQUE constraint failed: drafts.assignment_id, drafts.intern_id"),
+            )
+
         draft = Draft(
             assignment_id=assignment_id,
             assessment_id=assessment_id,

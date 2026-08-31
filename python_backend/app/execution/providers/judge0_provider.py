@@ -80,7 +80,9 @@ class Judge0ExecutionProvider(BaseExecutionProvider):
             logger.error("[Judge0Provider] Failed to submit job: %s", str(exc))
             raise ExecutionProviderUnavailableError("Judge0", str(exc))
 
-        if response.status_code == 429:
+        if response.status_code in (401, 403):
+            raise ExecutionProviderUnavailableError("Judge0", f"Unauthorized (HTTP {response.status_code}). Check JUDGE0_API_KEY / RapidAPI key.")
+        elif response.status_code == 429:
             raise ExecutionRateLimitedError("Judge0")
         elif response.status_code >= 500:
             raise ExecutionProviderUnavailableError("Judge0", f"HTTP {response.status_code}")

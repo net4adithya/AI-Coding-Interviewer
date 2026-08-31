@@ -1,142 +1,185 @@
+// frontend/src/pages/intern/InterviewOverview.tsx
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { assessmentsService, AssessmentResponse } from '../../services/assessments';
+import { useNavigate } from 'react-router-dom';
+import { demoService } from '../../services/demoApi';
+import { useAuth } from '@/contexts/AuthContext';
 
 export function InterviewOverview() {
-  const [assessment, setAssessment] = useState<AssessmentResponse | null>(null);
+  const navigate = useNavigate();
+  const { signOut } = useAuth();
+  const [assignment, setAssignment] = useState<any>(null);
+  const [assessment, setAssessment] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [agreed, setAgreed] = useState(false);
+  const [starting, setStarting] = useState(false);
 
   useEffect(() => {
-    assessmentsService.getMyAssessment()
-      .then(data => setAssessment(data))
-      .catch(err => console.error("Failed to fetch assignment:", err))
+    demoService.getMyAssignment()
+      .then(data => {
+        setAssignment(data.assignment);
+        setAssessment(data.assessment);
+      })
+      .catch(err => {
+        setError(err.message || 'Failed to load your assessment.');
+      })
       .finally(() => setIsLoading(false));
   }, []);
 
-  if (isLoading) {
-    return <div className="p-xl text-secondary">Loading your assessment...</div>;
-  }
+  const isCompleted = assignment?.status === 'COMPLETED';
 
-  if (!assessment) {
+  const handleStart = async () => {
+    if (isCompleted) return;
+    setStarting(true);
+    try {
+      await demoService.startAssignment();
+    } catch { /* non-critical */ }
+    navigate('/intern/interview/workspace');
+  };
+
+  if (isLoading) {
     return (
-      <div className="p-xl">
-        <h2 className="font-section-heading text-section-heading mb-xs">No Assessment Assigned</h2>
-        <p className="text-secondary">You do not have any active technical coding interviews assigned to you at this time.</p>
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="flex items-center gap-sm text-secondary">
+          <span className="material-symbols-outlined animate-spin">sync</span>
+          Loading your assessment...
+        </div>
       </div>
     );
   }
 
-  return (
-    <>
-      {/* Assessment Overview Card */}
-      <div className="bg-surface-container-lowest border border-outline-variant rounded-DEFAULT p-lg shadow-sm w-full">
-        <div className="mb-lg border-b border-outline-variant pb-md">
-          <h3 className="font-section-heading text-section-heading text-on-surface mb-xs">{assessment.title}</h3>
-          <p className="font-body-main text-body-main text-secondary">Software Development Internship</p>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-lg">
-          {/* Metric: Duration */}
-          <div className="flex flex-col">
-            <span className="font-metadata text-metadata text-secondary mb-xs flex items-center gap-xs uppercase tracking-wider">
-              <span className="material-symbols-outlined text-[16px]">schedule</span>
-              Duration
-            </span>
-            <span className="font-card-title text-card-title text-on-surface">{assessment.duration_minutes} minutes</span>
-          </div>
-          {/* Metric: Questions */}
-          <div className="flex flex-col">
-            <span className="font-metadata text-metadata text-secondary mb-xs flex items-center gap-xs uppercase tracking-wider">
-              <span className="material-symbols-outlined text-[16px]">list_alt</span>
-              Questions
-            </span>
-            <span className="font-card-title text-card-title text-on-surface">{assessment.total_questions}</span>
-          </div>
-          {/* Metric: Topics */}
-          <div className="flex flex-col col-span-2 md:col-span-1">
-            <span className="font-metadata text-metadata text-secondary mb-xs flex items-center gap-xs uppercase tracking-wider">
-              <span className="material-symbols-outlined text-[16px]">category</span>
-              Topics
-            </span>
-            <span className="font-card-title text-card-title text-on-surface">
-              {assessment.topic_tags?.length ? assessment.topic_tags.join(', ') : 'Mixed'}
-            </span>
-          </div>
-          {/* Metric: Status */}
-          <div className="flex flex-col col-span-2 md:col-span-1">
-            <span className="font-metadata text-metadata text-secondary mb-xs flex items-center gap-xs uppercase tracking-wider">
-              <span className="material-symbols-outlined text-[16px]">info</span>
-              Status
-            </span>
-            <span className="font-card-title text-card-title text-on-surface flex items-center gap-xs">
-              <span className="w-2 h-2 rounded-full bg-secondary-fixed-dim"></span>
-              Not Started
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Content Grid: Before you begin & Rules */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-lg mt-md">
-        {/* Before you begin */}
-        <div className="flex flex-col gap-md bg-surface-container-low border border-surface-variant p-lg rounded-DEFAULT">
-          <h4 className="font-section-heading text-section-heading text-on-surface flex items-center gap-sm">
-            <span className="material-symbols-outlined text-primary">flag</span>
-            Before you begin
-          </h4>
-          <ul className="flex flex-col gap-sm">
-            <li className="flex items-start gap-md">
-              <span className="font-code-snippet text-code-snippet text-primary-container bg-surface-container-lowest border border-outline-variant rounded-full w-6 h-6 flex items-center justify-center shrink-0">01</span>
-              <span className="font-body-main text-body-main text-on-surface-variant mt-1">You will receive coding problems one at a time.</span>
-            </li>
-            <li className="flex items-start gap-md">
-              <span className="font-code-snippet text-code-snippet text-primary-container bg-surface-container-lowest border border-outline-variant rounded-full w-6 h-6 flex items-center justify-center shrink-0">02</span>
-              <span className="font-body-main text-body-main text-on-surface-variant mt-1">Write and test your solution in the coding workspace.</span>
-            </li>
-            <li className="flex items-start gap-md">
-              <span className="font-code-snippet text-code-snippet text-primary-container bg-surface-container-lowest border border-outline-variant rounded-full w-6 h-6 flex items-center justify-center shrink-0">03</span>
-              <span className="font-body-main text-body-main text-on-surface-variant mt-1">Your code will be evaluated automatically against test cases.</span>
-            </li>
-            <li className="flex items-start gap-md">
-              <span className="font-code-snippet text-code-snippet text-primary-container bg-surface-container-lowest border border-outline-variant rounded-full w-6 h-6 flex items-center justify-center shrink-0">04</span>
-              <span className="font-body-main text-body-main text-on-surface-variant mt-1">Your progress is saved automatically during the interview.</span>
-            </li>
-            <li className="flex items-start gap-md">
-              <span className="font-code-snippet text-code-snippet text-primary-container bg-surface-container-lowest border border-outline-variant rounded-full w-6 h-6 flex items-center justify-center shrink-0">05</span>
-              <span className="font-body-main text-body-main text-on-surface-variant mt-1">Once you submit the interview, you cannot make further changes.</span>
-            </li>
-          </ul>
-        </div>
-        
-        {/* Interview Rules */}
-        <div className="flex flex-col gap-md border border-outline-variant p-lg rounded-DEFAULT">
-          <h4 className="font-section-heading text-section-heading text-on-surface flex items-center gap-sm">
-            <span className="material-symbols-outlined text-secondary">gavel</span>
-            Interview rules
-          </h4>
-          <ul className="list-disc list-inside text-secondary flex flex-col gap-sm font-body-main text-body-main">
-            <li>The interview has a fixed time limit.</li>
-            <li>Do not refresh or close the interview window unnecessarily.</li>
-            <li>Your code is evaluated automatically.</li>
-            <li>Hidden test cases are not visible.</li>
-            <li>Submit only when you are ready to finish.</li>
-          </ul>
-        </div>
-      </div>
-
-      {/* Start Area */}
-      <div className="mt-auto pt-xl border-t border-outline-variant flex flex-col md:flex-row justify-between items-center md:items-end gap-md">
-        <div className="text-center md:text-left">
-          <h4 className="font-section-heading text-section-heading text-on-surface mb-xs">Ready to begin?</h4>
-          <p className="font-body-main text-body-main text-secondary">Once you start, the interview timer will begin.</p>
-        </div>
-        <Link 
-          to="/intern/interview/workspace"
-          className="bg-primary-container text-on-primary font-navigation text-navigation px-lg py-sm rounded-DEFAULT flex items-center gap-sm hover:bg-primary transition-colors focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background"
+  if (error || !assessment) {
+    return (
+      <div className="p-xl max-w-lg mx-auto mt-xl text-center">
+        <span className="material-symbols-outlined text-[64px] text-outline block mb-md">assignment_late</span>
+        <h2 className="font-section-heading text-section-heading text-on-surface mb-xs">No Assessment Assigned</h2>
+        <p className="font-body-main text-body-main text-secondary mb-lg">
+          {error || 'You do not have any active technical coding interviews assigned to you at this time. Please wait for your admin to assign one.'}
+        </p>
+        <button
+          onClick={() => signOut()}
+          className="border border-outline-variant rounded px-md py-sm text-secondary hover:bg-surface-container-high transition-colors font-navigation text-navigation cursor-pointer"
         >
-          Start interview
-          <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
-        </Link>
+          Sign Out
+        </button>
       </div>
-    </>
+    );
+  }
+
+  const totalQ = assessment.total_questions || assessment.questions?.length || 0;
+  const { EASY = 0, MEDIUM = 0, HARD = 0 } = assessment.difficulty_distribution || {};
+
+  const rules = [
+    'Read every question carefully before starting to code.',
+    'Write complete, executable programs — your code reads input from stdin.',
+    'Your code will be evaluated against test cases through Judge0.',
+    'You can run your code as many times as needed before submitting.',
+    'Once you submit, the assessment cannot be modified or re-taken.',
+    'The timer begins when you click "Start Test".',
+  ];
+
+  return (
+    <div className="w-full max-w-3xl mx-auto px-md py-xl flex flex-col gap-xl">
+      {/* Assessment Card */}
+      <div className="bg-surface-container-lowest border border-outline-variant rounded-lg overflow-hidden">
+        <div className="bg-primary-container/10 border-b border-outline-variant p-lg">
+          <div className="flex items-start justify-between flex-wrap gap-md">
+            <div>
+              <h1 className="font-page-title text-page-title text-on-surface">{assessment.title}</h1>
+              <p className="font-body-main text-body-main text-secondary mt-xs">{assessment.topic}</p>
+            </div>
+            {isCompleted ? (
+              <span className="inline-flex items-center gap-xs px-md py-xs rounded-full bg-emerald-100 border border-emerald-300 text-emerald-800 font-navigation text-navigation">
+                <span className="material-symbols-outlined text-[16px]">lock</span>
+                Submitted & Locked
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-xs px-md py-xs rounded-full bg-surface-container border border-outline-variant text-secondary font-navigation text-navigation">
+                <span className="w-2 h-2 rounded-full bg-secondary-fixed-dim"></span>
+                Not Started
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="p-lg grid grid-cols-2 sm:grid-cols-4 gap-lg">
+          {[
+            { icon: 'schedule', label: 'Duration', value: `${assessment.duration_minutes} min` },
+            { icon: 'list_alt', label: 'Questions', value: `${totalQ}` },
+            { icon: 'code', label: 'Language', value: assessment.language || 'Python' },
+            { icon: 'bar_chart', label: 'Difficulty', value: `${EASY}E / ${MEDIUM}M / ${HARD}H` },
+          ].map(({ icon, label, value }) => (
+            <div key={label} className="flex flex-col gap-xs">
+              <div className="flex items-center gap-xs text-secondary">
+                <span className="material-symbols-outlined text-[18px]">{icon}</span>
+                <span className="font-metadata text-metadata">{label}</span>
+              </div>
+              <span className="font-card-title text-card-title text-on-surface">{value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Rules & Instructions */}
+      <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-lg flex flex-col gap-md">
+        <h2 className="font-section-heading text-section-heading text-on-surface flex items-center gap-xs">
+          <span className="material-symbols-outlined text-primary-container text-[22px]">info</span>
+          Instructions & Rules
+        </h2>
+        <ul className="flex flex-col gap-sm">
+          {rules.map((rule, index) => (
+            <li key={index} className="flex items-start gap-xs text-secondary font-body-main text-body-main">
+              <span className="material-symbols-outlined text-[18px] text-primary-container shrink-0 mt-0.5">check_circle</span>
+              <span>{rule}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {/* COMPLETED BANNER OR START TEST ACTIONS */}
+      {isCompleted ? (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-lg flex flex-col items-center text-center gap-sm">
+          <span className="material-symbols-outlined text-emerald-600 text-[48px]">check_circle</span>
+          <h3 className="font-section-heading text-section-heading text-emerald-900">Assessment Already Submitted</h3>
+          <p className="font-body-main text-body-main text-emerald-800 max-w-md">
+            You have already completed and submitted your responses for this assessment. Responses are locked and under evaluation.
+          </p>
+          <button
+            onClick={() => navigate('/intern/interview/completed')}
+            className="mt-sm bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm px-lg py-sm rounded-lg transition-colors cursor-pointer"
+          >
+            View Submission Details →
+          </button>
+        </div>
+      ) : (
+        <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-lg flex flex-col gap-md">
+          <label className="flex items-start gap-sm cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={agreed}
+              onChange={(e) => setAgreed(e.target.checked)}
+              className="mt-1 w-4 h-4 rounded text-primary-container focus:ring-primary-container cursor-pointer"
+            />
+            <span className="font-body-main text-body-main text-on-surface">
+              I have read and understood all the instructions. I am ready to begin the technical assessment.
+            </span>
+          </label>
+
+          <button
+            onClick={handleStart}
+            disabled={!agreed || starting}
+            className="w-full h-12 bg-primary-container text-on-primary-container font-bold text-base rounded-lg transition-all disabled:opacity-40 flex items-center justify-center gap-xs cursor-pointer shadow-sm hover:brightness-105"
+          >
+            {starting ? (
+              <span>Starting Assessment...</span>
+            ) : (
+              <>
+                <span>Start Test</span>
+                <span className="material-symbols-outlined text-[20px]">arrow_forward</span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

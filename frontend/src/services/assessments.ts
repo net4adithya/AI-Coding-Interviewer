@@ -1,4 +1,7 @@
 import api from './api';
+import { demoService } from './demoApi';
+
+const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === 'true';
 
 export interface AssessmentCreateRequest {
   title: string;
@@ -12,7 +15,7 @@ export interface AssessmentCreateRequest {
 }
 
 export interface AssessmentResponse {
-  id: number;
+  id: number | string;
   title: string;
   duration_minutes: number;
   total_questions: number;
@@ -22,13 +25,14 @@ export interface AssessmentResponse {
   status: string;
   created_at: string;
   published_at?: string;
-  assignment_id?: number;
+  assignment_id?: number | string;
 }
 
 export interface AssessmentInternResponse {
-  id: number;
-  assessment_id: number;
-  intern_id: number;
+  id: number | string;
+  assessment_id: number | string;
+  intern_id?: number;
+  intern_email?: string;
   status: string;
   assigned_at: string;
   started_at?: string;
@@ -37,27 +41,47 @@ export interface AssessmentInternResponse {
 }
 
 export const assessmentsService = {
-  getAssessments: async (): Promise<AssessmentResponse[]> => {
+  getAssessments: async (): Promise<any[]> => {
+    if (DEMO_MODE) return demoService.getAssessments();
     const response = await api.get('/api/v1/assessments/');
     return response.data;
   },
 
-  getMyAssessment: async (): Promise<AssessmentResponse> => {
+  getMyAssessment: async (): Promise<any> => {
+    if (DEMO_MODE) return demoService.getMyAssignment();
     const response = await api.get('/api/v1/assessments/intern/me');
     return response.data;
   },
 
-  createAssessment: async (data: AssessmentCreateRequest): Promise<AssessmentResponse> => {
+  createAssessment: async (data: AssessmentCreateRequest): Promise<any> => {
+    if (DEMO_MODE) {
+      console.log('[DEMO TRACE] Routing createAssessment to demoService.confirmAssessment');
+      return demoService.confirmAssessment({
+        title: data.title,
+        duration_minutes: data.duration_minutes,
+        language: 'Python',
+        topic: data.topic_tags?.[0] || 'Algorithms',
+        easy_count: data.difficulty_distribution?.easy || 0,
+        medium_count: data.difficulty_distribution?.medium || 0,
+        hard_count: data.difficulty_distribution?.hard || 0,
+        questions: [],
+      });
+    }
     const response = await api.post('/api/v1/assessments/', data);
     return response.data;
   },
 
-  getAssessmentQuestions: async (assessmentId: number): Promise<any[]> => {
+  getAssessmentQuestions: async (assessmentId: number | string): Promise<any[]> => {
+    if (DEMO_MODE) {
+      const ass = await demoService.getAssessment(String(assessmentId));
+      return ass?.questions || [];
+    }
     const response = await api.get(`/api/v1/assessments/${assessmentId}/questions`);
     return response.data;
   },
 
-  submitDecision: async (assignmentId: number, decision: string, notes?: string): Promise<any> => {
+  submitDecision: async (assignmentId: number | string, decision: string, notes?: string): Promise<any> => {
+    if (DEMO_MODE) return demoService.saveDecision(String(assignmentId), decision, notes || '');
     const response = await api.post(`/api/v1/assessments/intern/${assignmentId}/decision`, {
       decision: decision,
       reviewer_notes: notes
@@ -65,27 +89,38 @@ export const assessmentsService = {
     return response.data;
   },
 
-  getAssessment: async (id: number): Promise<AssessmentResponse> => {
+  getAssessment: async (id: number | string): Promise<any> => {
+    if (DEMO_MODE) return demoService.getAssessment(String(id));
     const response = await api.get(`/api/v1/assessments/${id}`);
     return response.data;
   },
 
-  previewAssessment: async (id: number): Promise<any[]> => {
+  previewAssessment: async (id: number | string): Promise<any[]> => {
+    if (DEMO_MODE) {
+      const ass = await demoService.getAssessment(String(id));
+      return ass?.questions || [];
+    }
     const response = await api.post(`/api/v1/assessments/${id}/preview`);
     return response.data;
   },
 
-  generateAssessment: async (id: number): Promise<AssessmentResponse> => {
+  generateAssessment: async (id: number | string): Promise<any> => {
+    if (DEMO_MODE) return demoService.getAssessment(String(id));
     const response = await api.post(`/api/v1/assessments/${id}/generate`);
     return response.data;
   },
 
-  publishAssessment: async (id: number): Promise<AssessmentResponse> => {
+  publishAssessment: async (id: number | string): Promise<any> => {
+    if (DEMO_MODE) return demoService.getAssessment(String(id));
     const response = await api.post(`/api/v1/assessments/${id}/publish`);
     return response.data;
   },
 
-  assignAssessmentByEmail: async (id: number, email: string): Promise<AssessmentInternResponse> => {
+  assignAssessmentByEmail: async (id: number | string, email: string): Promise<any> => {
+    if (DEMO_MODE) {
+      console.log('[DEMO TRACE] Routing assignAssessmentByEmail to /demo/assignments/assign', { assessment_id: id, intern_email: email });
+      return demoService.assignAssessment(String(id), email);
+    }
     const response = await api.post(`/api/v1/assessments/${id}/assign-email`, { email });
     return response.data;
   }

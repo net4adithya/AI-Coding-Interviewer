@@ -10,3 +10,6 @@ python-jose[cryptography]
 passlib[bcrypt]
 pypdf
 google-generativeai
+httpx
+redis>=5.0.0
+docker>=7.0.0

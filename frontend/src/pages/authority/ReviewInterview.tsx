@@ -1,213 +1,433 @@
+// frontend/src/pages/authority/ReviewInterview.tsx
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import api from '../../services/api';
+import Editor from '@monaco-editor/react';
+import { demoService } from '../../services/demoApi';
+
+const SCORE_CATEGORIES = [
+  { key: 'correctness_score', label: 'Correctness', weight: 30, icon: 'check_circle' },
+  { key: 'algorithm_score', label: 'Algorithm', weight: 15, icon: 'account_tree' },
+  { key: 'time_complexity_score', label: 'Time Complexity', weight: 10, icon: 'speed' },
+  { key: 'space_complexity_score', label: 'Space Complexity', weight: 5, icon: 'memory' },
+  { key: 'readability_score', label: 'Readability', weight: 10, icon: 'visibility' },
+  { key: 'maintainability_score', label: 'Maintainability', weight: 10, icon: 'build' },
+  { key: 'security_score', label: 'Security', weight: 10, icon: 'security' },
+  { key: 'performance_score', label: 'Performance', weight: 5, icon: 'bolt' },
+  { key: 'documentation_score', label: 'Documentation', weight: 5, icon: 'description' },
+];
+
+function ScoreBar({ score }: { score: number }) {
+  const color = score >= 80 ? 'bg-emerald-500' : score >= 60 ? 'bg-amber-500' : 'bg-rose-500';
+  return (
+    <div className="flex items-center gap-sm w-full">
+      <div className="flex-1 h-2 bg-surface-container-high rounded-full overflow-hidden">
+        <div className={`h-full rounded-full transition-all duration-700 ${color}`} style={{ width: `${score}%` }} />
+      </div>
+      <span className={`text-sm font-semibold min-w-[36px] text-right ${
+        score >= 80 ? 'text-emerald-600' : score >= 60 ? 'text-amber-600' : 'text-rose-600'
+      }`}>{score}</span>
+    </div>
+  );
+}
 
 export function ReviewInterview() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [decision, setDecision] = useState<string | null>(null);
-  const [notes, setNotes] = useState<string>('');
-  const [reviewData, setReviewData] = useState<any>(null);
+  const [data, setData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [pollingReview, setPollingReview] = useState(false);
+  const [decision, setDecision] = useState<string | null>(null);
+  const [savingDecision, setSavingDecision] = useState(false);
+  const [decisionMsg, setDecisionMsg] = useState('');
 
   useEffect(() => {
-    if (id) {
-      api.get(`/authority-review/${id}`)
-        .then(res => {
-          setReviewData(res.data);
-          setDecision(res.data.authority_review?.decision || null);
-          setNotes(res.data.authority_review?.internal_notes || '');
-        })
-        .catch(err => console.error("Failed to fetch review data", err))
-        .finally(() => setIsLoading(false));
-    }
+    if (!id) return;
+    demoService.getSubmissionDetail(id)
+      .then(d => {
+        setData(d);
+        // Load existing decision if any
+        if (d.authority_decision?.decision) {
+          setDecision(d.authority_decision.decision);
+        }
+        // If review is pending, start polling
+        if (d.submission?.gemini_review_status === 'PENDING') {
+          setPollingReview(true);
+        }
+      })
+      .catch(err => console.error('Failed to load review:', err))
+      .finally(() => setIsLoading(false));
   }, [id]);
 
-  const handleSave = async () => {
-    if (decision && id) {
-      try {
-        let endpoint = `/authority-review/${id}/approve`;
-        if (decision === 'Needs Review') endpoint = `/authority-review/${id}/resubmit`;
-        if (decision === 'Not Recommended') endpoint = `/authority-review/${id}/reject`;
-
-        await api.post(endpoint, { internal_notes: notes });
-        alert("Decision saved successfully");
-        navigate('/authority/interviews');
-      } catch (err) {
-        console.error("Failed to save decision", err);
-        alert("Failed to save decision");
-      }
-    } else {
-      navigate('/authority/interviews');
+  const handleDecision = async (dec: string) => {
+    if (!id) return;
+    setSavingDecision(true);
+    setDecisionMsg('');
+    try {
+      await demoService.saveDecision(id, dec);
+      setDecision(dec);
+      setDecisionMsg(`Decision saved: ${dec.replace('_', ' ')}`);
+      setTimeout(() => setDecisionMsg(''), 4000);
+    } catch (err: any) {
+      setDecisionMsg(`Failed to save decision: ${err.message}`);
+    } finally {
+      setSavingDecision(false);
     }
   };
 
-  if (isLoading) return <div className="p-xl text-secondary">Loading review...</div>;
-  if (!reviewData) return <div className="p-xl text-secondary">Review not found or no submission available.</div>;
+  // Poll for Gemini review completion
+  useEffect(() => {
+    if (!pollingReview || !id) return;
+    const interval = setInterval(async () => {
+      try {
+        const status = await demoService.getReviewStatus(id);
+        if (status.review_available) {
+          const updated = await demoService.getSubmissionDetail(id);
+          setData(updated);
+          setPollingReview(false);
+          clearInterval(interval);
+        }
+      } catch { /* keep polling */ }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [pollingReview, id]);
 
-  const { submission, ai_review, static_analysis, docker_execution, authority_review } = reviewData;
+  if (isLoading) {
+    return <div className="p-xl text-secondary flex items-center gap-sm"><span className="material-symbols-outlined animate-spin">sync</span> Loading review...</div>;
+  }
+  if (!data) {
+    return <div className="p-xl text-secondary">Review not found or submission not available.</div>;
+  }
 
-  const formatDate = (dateString: string) => {
-    const d = new Date(dateString);
-    return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
-  };
+  const { submission, assessment, gemini_review: review } = data;
+  const intern_name = submission?.intern_email?.split('@')[0]?.replace(/^\w/, (c: string) => c.toUpperCase()) || 'Intern';
 
-  const getOverallResult = () => {
-    if (ai_review?.recommendation) return ai_review.recommendation;
-    if (ai_review?.overall_score > 80) return "Strong";
-    if (ai_review?.overall_score > 60) return "Average";
-    return "Needs Improvement";
-  };
+  // Extract the first submitted code for display
+  const codeByQuestion = submission?.code_by_question || {};
+  const firstEntry = Object.values(codeByQuestion)[0] as any;
+  const submittedCode = firstEntry?.code || '';
+  const submittedLanguage = firstEntry?.language || submission?.final_language || 'python';
+
+  const overallScore = review?.overall_score;
+  const hasReview = review && !review.error;
 
   return (
-    <div className="max-w-max_content_width mx-auto p-xl">
-      {/* Page Header */}
-      <div className="mb-lg flex justify-between items-end">
+    <div className="max-w-max_content_width mx-auto p-xl flex flex-col gap-xl">
+      {/* Header */}
+      <div className="flex justify-between items-start flex-wrap gap-md">
         <div>
-          <h1 className="font-page-title text-page-title text-on-surface">Interview Review</h1>
+          <button
+            onClick={() => navigate('/authority/submissions')}
+            className="flex items-center gap-xs text-secondary hover:text-primary-container transition-colors text-sm mb-sm"
+          >
+            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+            Back to Submissions
+          </button>
+          <h1 className="font-page-title text-page-title text-on-surface">AI Interview Review</h1>
         </div>
         <div className="flex items-center gap-sm">
-          <span className="font-metadata text-metadata text-on-surface-variant">Status:</span>
-          <span className={`inline-flex items-center gap-base px-sm py-xs rounded text-xs font-semibold uppercase tracking-wider ${
-            authority_review.status === 'COMPLETED' ? 'bg-surface-container-low border border-primary-fixed-dim text-primary' : 'bg-surface-container border border-outline-variant text-secondary'
-          }`}>
-            <span className={`w-2 h-2 rounded-full ${authority_review.status === 'COMPLETED' ? 'bg-primary-container' : 'bg-outline'}`}></span>
-            {authority_review.status || 'PENDING'}
-          </span>
+          {pollingReview && (
+            <span className="flex items-center gap-xs text-amber-600 text-sm">
+              <span className="material-symbols-outlined text-[18px] animate-spin">sync</span>
+              AI review generating...
+            </span>
+          )}
+          {hasReview && overallScore !== undefined && (
+            <div className={`text-3xl font-bold ${
+              overallScore >= 80 ? 'text-emerald-600' : overallScore >= 60 ? 'text-amber-600' : 'text-rose-600'
+            }`}>
+              {overallScore}<span className="text-secondary text-lg font-normal">/100</span>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Candidate Summary Card */}
-      <div className="bg-surface-container-lowest border border-outline-variant rounded p-lg mb-lg flex items-center justify-between">
+      {/* Candidate Card */}
+      <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-lg flex items-center justify-between flex-wrap gap-md">
         <div className="flex items-center gap-lg">
-          <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center border border-outline-variant">
-            <span className="material-symbols-outlined text-on-surface-variant" style={{ fontSize: '40px' }}>person</span>
+          <div className="w-16 h-16 rounded-full bg-primary-container/20 flex items-center justify-center text-primary-container text-2xl font-bold">
+            {intern_name[0]}
           </div>
           <div>
-            <h2 className="font-card-title text-card-title text-on-surface">{submission.intern_name || submission.intern_email?.split('@')[0] || 'Unknown'}</h2>
-            <p className="font-metadata text-metadata text-on-surface-variant mt-base">{submission.assignment_title}</p>
+            <h2 className="font-card-title text-card-title text-on-surface">{intern_name}</h2>
+            <p className="font-metadata text-metadata text-secondary mt-xs">{submission?.intern_email}</p>
+            <p className="font-metadata text-metadata text-secondary">{assessment?.title}</p>
           </div>
         </div>
         <div className="flex gap-xl">
-          <div>
-            <p className="font-metadata text-metadata text-on-surface-variant mb-base">Submitted On</p>
-            <p className="text-body-main font-medium">{submission.submission_timestamp ? formatDate(submission.submission_timestamp) : 'N/A'}</p>
-          </div>
-          <div>
-            <p className="font-metadata text-metadata text-on-surface-variant mb-base">Language</p>
-            <p className="text-body-main font-medium">{submission.language || 'Python 3'}</p>
-          </div>
-          <div>
-            <p className="font-metadata text-metadata text-on-surface-variant mb-base">Overall Result</p>
-            <p className="text-body-main font-medium text-primary">{getOverallResult()}</p>
-          </div>
+          {[
+            { label: 'Submitted', value: submission?.submitted_at ? new Date(submission.submitted_at).toLocaleString() : 'N/A' },
+            { label: 'Language', value: submittedLanguage?.toUpperCase() || 'N/A' },
+            { label: 'Duration', value: assessment ? `${assessment.duration_minutes} min` : 'N/A' },
+          ].map(({ label, value }) => (
+            <div key={label}>
+              <p className="font-metadata text-metadata text-secondary">{label}</p>
+              <p className="font-body-main font-medium text-on-surface">{value}</p>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Performance Overview Row */}
-      <div className="grid grid-cols-4 gap-md mb-xl border-b border-outline-variant pb-lg">
-        <div className="bg-surface-container-lowest border border-outline-variant p-md rounded flex flex-col justify-center">
-          <span className="font-metadata text-metadata text-on-surface-variant">Maintainability</span>
-          <span className="font-section-heading text-section-heading text-on-surface mt-sm">{static_analysis?.maintainability_index || 'N/A'}</span>
+      {/* AI Review Section */}
+      {!hasReview ? (
+        <div className="bg-surface-container-lowest border border-outline-variant rounded-lg p-xl text-center">
+          {pollingReview ? (
+            <div className="flex flex-col items-center gap-md">
+              <span className="material-symbols-outlined text-[48px] text-primary-container animate-spin">auto_awesome</span>
+              <p className="font-section-heading text-section-heading text-on-surface">Gemini is reviewing the code...</p>
+              <p className="text-secondary text-sm">This may take 15–30 seconds. The page will update automatically.</p>
+            </div>
+          ) : review?.error ? (
+            <div className="text-error">
+              <span className="material-symbols-outlined text-[48px] block mb-sm">error</span>
+              <p className="font-section-heading">AI Review Unavailable</p>
+              <p className="text-sm mt-xs">{review.error}</p>
+            </div>
+          ) : (
+            <p className="text-secondary">No review data available.</p>
+          )}
         </div>
-        <div className="bg-surface-container-lowest border border-outline-variant p-md rounded flex flex-col justify-center">
-          <span className="font-metadata text-metadata text-on-surface-variant">Cyclomatic Complexity</span>
-          <span className="font-section-heading text-section-heading text-on-surface mt-sm">{static_analysis?.cyclomatic_complexity || 'N/A'}</span>
-        </div>
-        <div className="bg-surface-container-lowest border border-outline-variant p-md rounded flex flex-col justify-center">
-          <span className="font-metadata text-metadata text-on-surface-variant">Avg Execution</span>
-          <span className="font-section-heading text-section-heading text-on-surface mt-sm">{docker_execution?.execution_time_ms ? `${(docker_execution.execution_time_ms / 1000).toFixed(2)}s` : 'N/A'}</span>
-        </div>
-        <div className="bg-surface-container-lowest border border-outline-variant p-md rounded flex flex-col justify-center">
-          <span className="font-metadata text-metadata text-on-surface-variant">Code Smells</span>
-          <span className="font-section-heading text-section-heading text-on-surface mt-sm text-primary">{static_analysis?.code_smells || 0}</span>
-        </div>
-      </div>
+      ) : (
+        <>
+          {/* Score Cards Grid */}
+          <section>
+            <h3 className="font-section-heading text-section-heading text-on-surface mb-md flex items-center gap-sm">
+              <span className="material-symbols-outlined text-primary-container">analytics</span>
+              Score Breakdown
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-md">
+              {SCORE_CATEGORIES.map(cat => {
+                const score = review?.[cat.key] ?? 0;
+                return (
+                  <div key={cat.key} className="bg-surface-container-lowest border border-outline-variant rounded p-md flex flex-col gap-sm">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-xs">
+                        <span className="material-symbols-outlined text-[18px] text-primary-container">{cat.icon}</span>
+                        <span className="font-navigation text-navigation text-on-surface">{cat.label}</span>
+                      </div>
+                      <span className="text-xs text-secondary">{cat.weight}%</span>
+                    </div>
+                    <ScoreBar score={score} />
+                  </div>
+                );
+              })}
+            </div>
 
-      <section className="mb-xl">
-        <h3 className="font-section-heading text-section-heading text-on-surface mb-md">Code Analysis</h3>
-        <div className="bg-surface-container-lowest border border-outline-variant rounded p-lg">
-          <div className="flex flex-col gap-sm">
-            {(static_analysis?.structured_output?.issues || []).map((issue: any, idx: number) => (
-              <div key={idx} className="p-md border border-outline-variant rounded flex items-start gap-md">
-                <span className="material-symbols-outlined text-tertiary mt-xs">info</span>
-                <div>
-                  <p className="text-body-main font-semibold">{issue.type || 'Issue'}</p>
-                  <p className="text-metadata text-on-surface-variant">{issue.description || 'Details unavailable'}</p>
-                </div>
+            {/* Overall Score */}
+            <div className={`mt-md p-lg rounded-lg border flex items-center justify-between ${
+              (overallScore ?? 0) >= 80 ? 'bg-emerald-50 border-emerald-200' :
+              (overallScore ?? 0) >= 60 ? 'bg-amber-50 border-amber-200' :
+              'bg-rose-50 border-rose-200'
+            }`}>
+              <div>
+                <p className="font-navigation text-navigation text-secondary">Overall Score (Weighted)</p>
+                <p className="text-metadata text-secondary text-sm">Correctness 30% · Algorithm 15% · Complexity 15% · Readability 10% · Maintainability 10% · Security 10% · Others 10%</p>
               </div>
-            ))}
-            {!static_analysis?.structured_output?.issues?.length && (
-              <p className="text-secondary text-sm">No code analysis issues detected.</p>
-            )}
-          </div>
-        </div>
-      </section>
+              <div className={`text-5xl font-bold ${
+                (overallScore ?? 0) >= 80 ? 'text-emerald-600' :
+                (overallScore ?? 0) >= 60 ? 'text-amber-600' : 'text-rose-600'
+              }`}>
+                {overallScore}<span className="text-2xl font-normal text-secondary">/100</span>
+              </div>
+            </div>
+          </section>
 
-      <section className="mb-xl">
-        <h3 className="font-section-heading text-section-heading text-on-surface mb-md">Gemini AI Review</h3>
-        <div className="bg-surface-container-lowest border border-outline-variant rounded p-lg">
-          <div className="flex justify-between items-center mb-lg">
+          {/* Complexity */}
+          {(review?.time_complexity || review?.space_complexity) && (
+            <div className="flex gap-md flex-wrap">
+              <div className="bg-surface-container-lowest border border-outline-variant rounded p-md flex-1 min-w-[200px]">
+                <p className="text-xs text-secondary uppercase tracking-wider mb-xs">Time Complexity</p>
+                <p className="font-code-snippet text-card-title text-primary-container">{review.time_complexity}</p>
+              </div>
+              <div className="bg-surface-container-lowest border border-outline-variant rounded p-md flex-1 min-w-[200px]">
+                <p className="text-xs text-secondary uppercase tracking-wider mb-xs">Space Complexity</p>
+                <p className="font-code-snippet text-card-title text-primary-container">{review.space_complexity}</p>
+              </div>
+            </div>
+          )}
+
+          {/* AI Summary */}
+          <section className="bg-surface-container-lowest border border-outline-variant rounded-lg p-lg">
+            <h3 className="font-section-heading text-section-heading text-on-surface mb-md flex items-center gap-sm">
+              <span className="material-symbols-outlined text-primary-container">auto_awesome</span>
+              Gemini AI Summary
+            </h3>
+            <p className="font-body-main text-body-main text-on-surface-variant mb-lg">{review.summary}</p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-lg">
+              <div>
+                <h4 className="font-card-title text-card-title text-emerald-700 flex items-center gap-xs mb-sm">
+                  <span className="material-symbols-outlined text-[18px]">thumb_up</span>
+                  Strengths
+                </h4>
+                <ul className="flex flex-col gap-xs">
+                  {(review.strengths || []).map((s: string, i: number) => (
+                    <li key={i} className="flex items-start gap-sm text-body-main text-on-surface-variant">
+                      <span className="material-symbols-outlined text-emerald-500 text-[16px] mt-[2px] shrink-0">check</span>
+                      {s}
+                    </li>
+                  ))}
+                  {!review.strengths?.length && <li className="text-secondary text-sm">No strengths highlighted.</li>}
+                </ul>
+              </div>
+
+              <div>
+                <h4 className="font-card-title text-card-title text-rose-700 flex items-center gap-xs mb-sm">
+                  <span className="material-symbols-outlined text-[18px]">thumb_down</span>
+                  Weaknesses
+                </h4>
+                <ul className="flex flex-col gap-xs">
+                  {(review.weaknesses || []).map((w: string, i: number) => (
+                    <li key={i} className="flex items-start gap-sm text-body-main text-on-surface-variant">
+                      <span className="material-symbols-outlined text-rose-500 text-[16px] mt-[2px] shrink-0">close</span>
+                      {w}
+                    </li>
+                  ))}
+                  {!review.weaknesses?.length && <li className="text-secondary text-sm">No weaknesses highlighted.</li>}
+                </ul>
+              </div>
+            </div>
+
+            {review.suggestions?.length > 0 && (
+              <div className="mt-lg border-t border-outline-variant pt-lg">
+                <h4 className="font-card-title text-card-title text-on-surface flex items-center gap-xs mb-sm">
+                  <span className="material-symbols-outlined text-[18px] text-primary-container">lightbulb</span>
+                  Suggestions
+                </h4>
+                <ul className="flex flex-col gap-xs">
+                  {review.suggestions.map((s: string, i: number) => (
+                    <li key={i} className="flex items-start gap-sm text-body-main text-on-surface-variant">
+                      <span className="text-primary-container font-bold text-sm mt-[2px] shrink-0">{i + 1}.</span>
+                      {s}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <p className="text-metadata text-secondary italic mt-lg">
+              AI-generated analysis is provided as decision support. Final evaluation remains with the interview team.
+            </p>
+          </section>
+        </>
+      )}
+
+      {/* Submitted Code */}
+      {submittedCode && (
+        <section>
+          <h3 className="font-section-heading text-section-heading text-on-surface mb-md flex items-center gap-sm">
+            <span className="material-symbols-outlined text-primary-container">code</span>
+            Submitted Code
+          </h3>
+          <div className="rounded overflow-hidden border border-outline-variant">
+            <div className="bg-[#252526] px-md py-xs flex items-center gap-sm border-b border-[#3c3c3c]">
+              <span className="material-symbols-outlined text-[#569cd6] text-[16px]">code</span>
+              <span className="text-[#cccccc] text-sm font-code-snippet">{submittedLanguage}</span>
+              <span className="ml-auto text-[#888] text-xs">Read-only</span>
+            </div>
+            <Editor
+              height="400px"
+              language={submittedLanguage === 'c++' ? 'cpp' : submittedLanguage}
+              theme="vs-dark"
+              value={submittedCode}
+              options={{
+                readOnly: true,
+                minimap: { enabled: false },
+                fontSize: 13,
+                fontFamily: "'JetBrains Mono', monospace",
+                lineHeight: 22,
+                padding: { top: 12 },
+                scrollBeyondLastLine: false,
+              }}
+            />
+          </div>
+        </section>
+      )}
+
+      {/* ── AUTHORITY DECISION ─────────────────────────────────────────────── */}
+      <section className="bg-surface-container-lowest border border-outline-variant rounded-xl p-xl">
+        <h3 className="font-section-heading text-section-heading text-on-surface mb-sm flex items-center gap-sm">
+          <span className="material-symbols-outlined text-primary-container">gavel</span>
+          Authority Decision
+        </h3>
+        <p className="text-secondary text-sm mb-lg">
+          Record your hiring decision for this candidate based on the code quality, AI review, and overall performance.
+        </p>
+
+        {/* Decision Buttons */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-md mb-lg">
+          {[
+            {
+              key: 'RECOMMENDED',
+              label: 'Recommended',
+              icon: 'thumb_up',
+              active: 'bg-emerald-600 text-white shadow-md ring-2 ring-emerald-300',
+              idle: 'border-2 border-emerald-300 text-emerald-700 hover:bg-emerald-50',
+            },
+            {
+              key: 'NEEDS_REVIEW',
+              label: 'Needs Review',
+              icon: 'pending',
+              active: 'bg-amber-500 text-white shadow-md ring-2 ring-amber-300',
+              idle: 'border-2 border-amber-300 text-amber-700 hover:bg-amber-50',
+            },
+            {
+              key: 'NOT_RECOMMENDED',
+              label: 'Not Recommended',
+              icon: 'thumb_down',
+              active: 'bg-rose-600 text-white shadow-md ring-2 ring-rose-300',
+              idle: 'border-2 border-rose-300 text-rose-700 hover:bg-rose-50',
+            },
+          ].map(opt => (
+            <button
+              key={opt.key}
+              onClick={() => handleDecision(opt.key)}
+              disabled={savingDecision}
+              className={`flex items-center justify-center gap-sm py-lg px-md rounded-xl font-navigation text-navigation transition-all ${
+                decision === opt.key ? opt.active : opt.idle
+              } disabled:opacity-60`}
+            >
+              <span className="material-symbols-outlined text-[22px]" style={decision === opt.key ? { fontVariationSettings: '"FILL" 1' } : {}}>
+                {opt.icon}
+              </span>
+              {opt.label}
+              {decision === opt.key && (
+                <span className="material-symbols-outlined text-[16px] ml-xs">check_circle</span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Current Decision Display */}
+        {decision && (
+          <div className={`flex items-center gap-sm p-md rounded-lg border ${
+            decision === 'RECOMMENDED' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
+            decision === 'NEEDS_REVIEW' ? 'bg-amber-50 border-amber-200 text-amber-800' :
+            'bg-rose-50 border-rose-200 text-rose-800'
+          }`}>
+            <span className="material-symbols-outlined" style={{ fontVariationSettings: '"FILL" 1' }}>
+              {decision === 'RECOMMENDED' ? 'check_circle' : decision === 'NEEDS_REVIEW' ? 'pending' : 'cancel'}
+            </span>
             <div>
-              <span className="text-metadata text-on-surface-variant">Overall Technical Assessment</span>
-              <div className="text-page-title font-bold text-primary">{ai_review?.recommendation || 'Pending'}</div>
+              <p className="font-semibold">
+                Current Decision: {decision.replace('_', ' ')}
+              </p>
+              <p className="text-sm opacity-70">This decision is saved and will persist as long as the demo server is running.</p>
             </div>
           </div>
-          <div className="mb-md">
-            <h4 className="font-card-title text-card-title text-on-surface mb-xs">Strengths</h4>
-            <ul className="list-disc ml-md text-body-main text-on-surface-variant">
-              {(ai_review?.strengths || []).map((str: string, i: number) => <li key={i}>{str}</li>)}
-            </ul>
-            {!(ai_review?.strengths?.length) && <span className="text-secondary text-sm">No specific strengths highlighted.</span>}
-          </div>
-          <div className="mb-md">
-            <h4 className="font-card-title text-card-title text-on-surface mb-xs">Weaknesses</h4>
-            <ul className="list-disc ml-md text-body-main text-on-surface-variant">
-              {(ai_review?.weaknesses || []).map((wk: string, i: number) => <li key={i}>{wk}</li>)}
-            </ul>
-            {!(ai_review?.weaknesses?.length) && <span className="text-secondary text-sm">No specific weaknesses highlighted.</span>}
-          </div>
-          <p className="text-metadata text-on-surface-variant italic mt-md">AI-generated analysis is provided as decision support. Final evaluation remains with the interview team.</p>
-        </div>
-      </section>
+        )}
 
-      <section className="mb-xl">
-        <h3 className="font-section-heading text-section-heading text-on-surface mb-md">Authority Decision</h3>
-        <div className="bg-surface-container-lowest border border-outline-variant rounded p-lg">
-          <div className="flex gap-md mb-lg">
-            <button 
-              onClick={() => setDecision('Recommended')}
-              className={`flex-1 py-sm border rounded font-navigation text-navigation transition-colors ${decision === 'Recommended' ? 'bg-primary text-on-primary border-primary' : 'border-outline-variant hover:bg-surface-container-low text-on-surface'}`}
-            >
-              Recommended
-            </button>
-            <button 
-              onClick={() => setDecision('Needs Review')}
-              className={`flex-1 py-sm border rounded font-navigation text-navigation transition-colors ${decision === 'Needs Review' ? 'bg-secondary text-on-secondary border-secondary' : 'border-outline-variant hover:bg-surface-container-low text-on-surface'}`}
-            >
-              Needs Review
-            </button>
-            <button 
-              onClick={() => setDecision('Not Recommended')}
-              className={`flex-1 py-sm border rounded font-navigation text-navigation transition-colors ${decision === 'Not Recommended' ? 'bg-error text-on-error border-error' : 'border-outline-variant hover:bg-surface-container-low text-on-surface'}`}
-            >
-              Not Recommended
-            </button>
+        {/* Feedback Message */}
+        {decisionMsg && (
+          <div className="mt-sm text-sm text-secondary bg-surface-container rounded p-sm">
+            {decisionMsg}
           </div>
-          <div className="mb-lg">
-            <label className="block text-metadata text-on-surface-variant mb-xs">Internal Notes</label>
-            <textarea 
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              className="w-full border border-outline-variant rounded p-md text-body-main focus:ring-1 focus:ring-primary outline-none bg-surface-container-lowest" 
-              placeholder="Add notes for the interview team..." 
-              rows={4}
-            ></textarea>
-          </div>
-          <div className="flex justify-end">
-            <button onClick={handleSave} className="bg-primary text-on-primary px-xl py-sm rounded font-navigation text-navigation hover:opacity-90 transition-opacity">Save Review</button>
-          </div>
-        </div>
+        )}
+
+        {!decision && (
+          <p className="text-secondary text-sm italic">
+            No decision recorded yet. Select one of the options above.
+          </p>
+        )}
       </section>
     </div>
   );

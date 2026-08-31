@@ -132,16 +132,20 @@ export function QuestionBank() {
                           onClick={() => navigate(`/authority/question-bank/${bank.id}`)} 
                           className="border-b border-outline-variant hover:bg-surface-container-low transition-colors cursor-pointer group"
                         >
-                          <td className="py-sm px-md font-medium text-primary group-hover:underline">{bank.filename}</td>
-                          <td className="py-sm px-md text-secondary">{bank.question_count} questions</td>
+                          <td className="py-sm px-md font-medium text-primary group-hover:underline">
+                            {bank.title || bank.filename || 'Question Bank'}
+                          </td>
+                          <td className="py-sm px-md text-secondary">
+                            {bank.question_count ?? bank.questions?.length ?? 0} questions
+                          </td>
                           <td className="py-sm px-md text-secondary hidden sm:table-cell">
                             {new Date(bank.created_at).toLocaleDateString()}
                           </td>
                           <td className="py-sm px-md">
                             <div className="flex items-center gap-xs">
-                              <span className={`w-2 h-2 rounded-full ${bank.status === 'COMPLETED' ? 'bg-emerald-500' : 'bg-primary-container'}`}></span>
-                              <span className={`text-sm ${bank.status !== 'COMPLETED' ? 'text-secondary' : ''}`}>
-                                {bank.status === 'COMPLETED' ? 'Ready' : bank.status === 'FAILED' ? 'Failed' : 'Processing'}
+                              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                              <span className="text-sm text-emerald-700 font-semibold">
+                                Ready
                               </span>
                             </div>
                           </td>

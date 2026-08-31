@@ -11,6 +11,9 @@ const navigation = [
   { name: 'Submissions', href: '/authority/submissions', icon: 'inventory' },
 ];
 
+// Demo primary action — shown prominently above nav items
+const CREATE_ASSESSMENT_HREF = '/authority/create-assignment';
+
 export function AuthorityLayout() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -41,8 +44,14 @@ export function AuthorityLayout() {
     navigate('/login');
   };
 
+  useEffect(() => {
+    if (user && user.role !== 'authority' && user.role !== 'admin' as any) {
+      navigate('/intern/interview/overview');
+    }
+  }, [user, navigate]);
+
   return (
-    <div className="flex h-full font-body-main antialiased overflow-hidden bg-background text-on-surface">
+    <div className="flex min-h-screen font-body-main antialiased bg-background text-on-surface">
       {/* SideNavBar */}
       <nav className="fixed left-0 top-0 h-full w-[230px] bg-white border-r border-outline-variant flex flex-col py-lg px-md z-20 hidden md:flex">
         {/* Brand / Profile */}
@@ -81,6 +90,21 @@ export function AuthorityLayout() {
             </div>
           )}
         </div>
+
+        {/* Prominent Create Assignment CTA */}
+        <NavLink
+          to={CREATE_ASSESSMENT_HREF}
+          className={({ isActive }) =>
+            `flex items-center gap-2 px-sm py-sm rounded-lg font-navigation text-navigation transition-all mb-4 ${
+              isActive
+                ? 'bg-primary-container text-white shadow-md'
+                : 'bg-primary-container/90 text-white hover:bg-primary-container shadow-sm hover:shadow-md'
+            }`
+          }
+        >
+          <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: '"FILL" 1' }}>add_circle</span>
+          <span className="font-semibold">+ Create Assignment</span>
+        </NavLink>
 
         {/* Navigation Links */}
         <ul className="flex flex-col gap-1 flex-1">
@@ -126,8 +150,8 @@ export function AuthorityLayout() {
             <span>Settings</span>
           </a>
         </div>
-        <button className="mt-md w-full bg-primary-container text-white py-2 rounded text-sm font-semibold tracking-wide hover:opacity-90 transition-opacity">
-          WORKSPACE
+        <button className="mt-md w-full border border-outline-variant text-secondary py-2 rounded text-sm font-semibold tracking-wide hover:bg-surface-container-high transition-colors">
+          Settings
         </button>
       </nav>
 

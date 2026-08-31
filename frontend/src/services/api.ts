@@ -6,6 +6,13 @@ const api = axios.create({
 });
 
 api.interceptors.request.use(async (config) => {
+  if (import.meta.env.VITE_DEMO_MODE === 'true') {
+    const demoToken = localStorage.getItem('demo_token');
+    if (demoToken) {
+      config.headers['X-Demo-Token'] = demoToken;
+    }
+    return config;
+  }
   const { data: { session } } = await supabase.auth.getSession();
   if (session?.access_token) {
     config.headers.Authorization = `Bearer ${session.access_token}`;

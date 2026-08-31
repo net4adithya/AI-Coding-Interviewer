@@ -7,6 +7,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from app.db.base_class import Base
+from app.users.models import User
+from app.assessment.models.assessment import Assessment  # noqa: F401
 
 class Submission(Base):
     __tablename__ = "submission"
